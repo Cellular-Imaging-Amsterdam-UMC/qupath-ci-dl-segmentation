@@ -10,7 +10,8 @@ enum Engine {
     STARDIST("Stardist", "stardist", "CI_DL_STARDIST_MODELS"),
     STARDIST_QP("Stardist-QP", "stardist-qp", "STARDIST_LOCAL_MODELS_PATH"),
     INSTANSEG("InstanSeg", "instanseg", "CI_DL_INSTANSEG_MODELS"),
-    SPOTIFLOW("Spotiflow", "spotiflow", "SPOTIFLOW_LOCAL_MODELS_PATH");
+    SPOTIFLOW("Spotiflow", "spotiflow", "SPOTIFLOW_LOCAL_MODELS_PATH"),
+    CELLSAM("CellSAM", "cellsam", "CI_DL_CELLSAM_MODELS");
 
     final String title;
     final String id;
@@ -27,11 +28,11 @@ enum Engine {
     }
 
     boolean usesSecondaryChannel() {
-        return isCellpose() || this == INSTANSEG;
+        return isCellpose() || this == INSTANSEG || this == CELLSAM;
     }
 
     boolean usesThirdChannel() {
-        return this == CELLPOSE_SAM || this == INSTANSEG;
+        return this == CELLPOSE_SAM || this == INSTANSEG || this == CELLSAM;
     }
 
     boolean usesPython(boolean training) {
@@ -53,6 +54,7 @@ enum Engine {
             case INSTANSEG -> training ? List.of()
                     : List.of("single_channel_nuclei", "fluorescence_nuclei_and_cells", "brightfield_nuclei");
             case SPOTIFLOW -> List.of("general", "hybiss", "fluo_live", "synth_complex");
+            case CELLSAM -> List.of("cellsam_general", "cellsam_extra");
         };
     }
 
@@ -66,7 +68,7 @@ enum Engine {
         var folder = modelDirectory(training);
         if (folder == null)
             return name;
-        var path = folder.resolve(name);
+        var path = folder.resolve(this == CELLSAM ? name + ".pt" : name);
         if (Files.exists(path))
             return path.toString();
         if (this == SPOTIFLOW && Files.isDirectory(folder.resolve("models").resolve(name)))
@@ -94,6 +96,7 @@ enum Engine {
             case STARDIST_QP -> "stardist_models";
             case INSTANSEG -> "models/instanseg";
             case SPOTIFLOW -> "spotiflow_models";
+            case CELLSAM -> "models/cellsam";
         });
     }
 }

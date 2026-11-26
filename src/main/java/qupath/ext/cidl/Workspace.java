@@ -86,11 +86,14 @@ final class Workspace {
     private PathObjectHierarchy rectangleHierarchy;
     private FontAwesome.Glyph rectangleLockGlyph;
     private Job active;
+    private ModelComparison comparison;
+    private Node comparisonPane;
     private double expandedHeight;
     private boolean expandedMaximized;
     private double compactChrome;
 
-    Workspace(QuPathGUI qupath, boolean training, Map<Engine, StringProperty> pythonPaths) {
+    Workspace(QuPathGUI qupath, boolean training, Map<Engine, StringProperty> pythonPaths,
+              ModelLibrary library, MicroSamTool microSam) {
         this.qupath = qupath;
         this.training = training;
         this.loss = training ? new LossChart() : null;
@@ -117,7 +120,9 @@ final class Workspace {
 
         var engines = Engine.values();
         for (var engine : engines) {
-            var form = new ModelForm(engine, training, stage, pythonPaths.get(engine));
+            if (training && engine == Engine.CELLSAM)
+                continue;
+            var form = new ModelForm(engine, training, stage, pythonPaths.get(engine), library);
             var tab = new Tab(engine.title, form.content());
             tab.setUserData(engine);
             tabs.getTabs().add(tab);
@@ -141,7 +146,7 @@ final class Workspace {
             toggleRectangleLocks.setMaxWidth(32);
             toggleRectangleLocks.setTooltip(new Tooltip());
             toggleRectangleLocks.setOnAction(event -> toggleRectangleLocks());
-            var actions = new FlowPane(8, 6, chooseImages, addClasses, addTraining, addValidation, toggleRectangleLocks);
+            var actions = new FlowPane(8, 6, chooseImages, addClasses, addTraining, addValidation, toggleRectangleLocks, microSam.toggle());
             var instruction = new Label();
             var selectedTab = tabs.getSelectionModel().selectedItemProperty();
             instruction.textProperty().bind(javafx.beans.binding.Bindings.createStringBinding(() -> {
@@ -162,6 +167,13 @@ final class Workspace {
             expandedDetails.addAll(List.of(toolbar.getChildren().getFirst(), instruction));
         }
         content.getChildren().add(tabs);
+        if (!training) {
+            comparison = new ModelComparison(qupath, () -> activeForm().prediction(),
+                    () -> activeForm().selectedModelName(), this::enqueue);
+            comparisonPane = comparison.pane();
+            content.getChildren().add(comparisonPane);
+            stage.addEventHandler(WindowEvent.WINDOW_HIDING, event -> comparison.hidden());
+        }
         log.setEditable(false);
         log.setWrapText(false);
         double logHeight = training ? 79 : 106;
@@ -177,6 +189,8 @@ final class Workspace {
         run = new Button(training ? "Start training" : "Run prediction");
         run.getStyleClass().add("primary");
         run.setOnAction(event -> start());
+        if (comparison != null)
+            comparison.busyProperty().addListener((obs, before, busy) -> run.setDisable(busy || active != null));
         cancel.setDisable(true);
         cancel.setOnAction(event -> {
             if (active != null) {
@@ -491,15 +505,21 @@ final class Workspace {
                     sources.add(new Training.Source(entry, data, marks));
                 }
                 var settings = form.training(project.getPath().toAbsolutePath().getParent());
-                launch(engine, job -> Training.run(job, sources, settings));
+                var projectPath = project.getPath();
+                launch(engine, job -> {
+                    Training.run(job, sources, settings);
+                    try {
+                        ModelLibrary.trained(projectPath, settings);
+                        job.log("Model registered in project presets.");
+                    } catch (java.io.IOException e) {
+                        job.log("Model was saved. Could not update the Model Manager · " + message(e));
+                    }
+                });
             } else {
                 var data = qupath.getImageData();
                 if (data == null)
                     throw new IllegalArgumentException("Open an image first.");
-                var regions = data.getHierarchy().getSelectionModel().getSelectedObjects().stream()
-                        .filter(object -> (object.isAnnotation() || object.isTMACore()) && object.hasROI()
-                                && object.getROI().isArea() && !object.getROI().isEmpty())
-                        .map(object -> new Prediction.Region(object, object.getROI())).toList();
+                var regions = Prediction.selectedRegions(data);
                 if (regions.isEmpty())
                     throw new IllegalArgumentException("Select at least one area annotation or TMA core in the viewer.");
                 var settings = form.prediction();
@@ -523,6 +543,8 @@ final class Workspace {
         var job = new Job(this::enqueue);
         active = job;
         run.setDisable(true);
+        if (comparisonPane != null)
+            comparisonPane.setDisable(true);
         tabs.setDisable(true);
         chooseImages.setDisable(true);
         addClasses.setDisable(true);
@@ -552,6 +574,8 @@ final class Workspace {
                     loss.finish();
                 active = null;
                 run.setDisable(false);
+                if (comparisonPane != null)
+                    comparisonPane.setDisable(false);
                 tabs.setDisable(false);
                 cancel.setDisable(true);
                 status.setText(finalOutcome);

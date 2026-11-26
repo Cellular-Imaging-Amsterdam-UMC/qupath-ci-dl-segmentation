@@ -297,6 +297,74 @@ def predict_instanseg(config, device):
         save_instances(patch, result.cpu().numpy().reshape(patch["height"], patch["width"]))
 
 
+def predict_cellsam(config, device):
+    import os
+    import torch
+    from cellSAM import get_local_model, get_model
+    from cellSAM.utils import fill_holes_and_remove_small_masks, normalize_image
+
+    selection = config["model"]
+    path = Path(selection)
+    if path.is_file():
+        model = get_local_model(str(path))
+    elif selection in ("cellsam_general", "cellsam_extra"):
+        cached = sorted((Path.home() / ".deepcell" / "models").glob(f"cellsam_v*/{selection}.pt"))
+        if cached:
+            model = get_local_model(str(cached[-1]))
+        elif os.getenv("DEEPCELL_ACCESS_TOKEN"):
+            model = get_model(model=selection)
+        else:
+            raise FileNotFoundError(
+                "CellSAM requires a checkpoint from users.deepcell.org. "
+                "Choose the downloaded .pt file with Browse, or set DEEPCELL_ACCESS_TOKEN before launching QuPath."
+            )
+    else:
+        raise FileNotFoundError("Choose a CellSAM checkpoint file or a CellSAM preset.")
+    device = "cpu" if device == "mps" else device
+    threshold = config.get("threshold")
+    model = model.to(device).eval()
+    model.bbox_threshold = 0.4 if threshold is None else threshold
+    print(f"CellSAM · {path.name} · {device}")
+    for index, patch in enumerate(config["patches"], 1):
+        print(f"CellSAM region {index} of {len(config['patches'])}")
+        data = load_image(patch, config)
+        if min(data.shape[:2]) < 8:
+            raise ValueError("CellSAM requires regions of at least 8 × 8 model pixels.")
+        normalized = normalize_image(data)
+        tensor = torch.from_numpy(np.moveaxis(normalized, -1, 0).copy()).float().unsqueeze(0).to(device)
+        with torch.inference_mode():
+            prediction = model.predict(tensor)
+        instances = None if prediction is None else prediction[0]
+        if instances is None:
+            labels = np.zeros(data.shape[:2], dtype=np.int32)
+        else:
+            labels = fill_holes_and_remove_small_masks(instances, min_size=25)
+        save_instances(patch, labels)
+
+
+def prompt_microsam(config, device):
+    import torch
+    from micro_sam.util import get_sam_model
+
+    weights = config["model"] or None
+    if weights and not Path(weights).is_file():
+        raise FileNotFoundError("Choose an accessible µSAM checkpoint file.")
+    print("µSAM · Loading light microscopy checkpoint")
+    predictor = get_sam_model(model_type="vit_b_lm", device=device, checkpoint_path=weights)
+    patch = config["patches"][0]
+    data = load_image(patch, config)
+    low, high = np.percentile(data, (1, 99.8), axis=(0, 1))
+    normalized = np.uint8(255 * np.clip((data - low) / np.maximum(high - low, 1e-12), 0, 1))
+    if data.shape[-1] == 1:
+        normalized = np.repeat(normalized, 3, axis=-1)
+    points = np.array([[item["x"], item["y"]] for item in config["prompts"]], dtype=np.float32)
+    labels = np.array([item["label"] for item in config["prompts"]], dtype=np.int32)
+    print("µSAM · Computing image embedding and prompt mask")
+    with torch.inference_mode():
+        predictor.set_image(normalized)
+        masks, scores, _ = predictor.predict(point_coords=points, point_labels=labels, multimask_output=True)
+    save_instances(patch, masks[int(np.argmax(scores))])
+
 def labeled_crop(image, labels, size, rng):
     h, w = labels.shape
     ys, xs = np.nonzero(labels)
@@ -500,6 +568,8 @@ def main():
     logging.basicConfig(level=logging.INFO, format="%(name)s · %(message)s", stream=sys.stdout)
     device = select_device(config["device"])
     runners = {
+        ("prompt", "microsam"): prompt_microsam,
+        ("predict", "cellsam"): predict_cellsam,
         ("predict", "cellpose"): predict_cellpose,
         ("train", "cellpose"): train_cellpose,
         ("predict", "cellpose-sam"): predict_cellpose,

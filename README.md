@@ -4,7 +4,7 @@ A Java extension with two English-language workspaces under **Extensions → CI 
 
 | Workspace | Tabs |
 | --- | --- |
-| Prediction | Cellpose 3.x, Cellpose-SAM 4+, StarDist, StarDist-QP, InstanSeg, Spotiflow |
+| Prediction | Cellpose 3.x, Cellpose-SAM 4+, StarDist, StarDist-QP, InstanSeg, Spotiflow, CellSAM |
 | Training | Cellpose 3.x, Cellpose-SAM 4+, StarDist, StarDist-QP, InstanSeg, Spotiflow |
 
 ## Install
@@ -61,6 +61,30 @@ Use the chevron in the Training header to collapse or expand the workspace. The 
 - **StarDist** trains or fine-tunes a single-channel PyTorch model. **StarDist-QP** uses the same PyTorch workflow and additionally saves `model.onnx` for the QuPath Prediction tab. Use a local StarDist folder with weights, configuration and thresholds for PyTorch prediction.
 - **InstanSeg** predicts nuclei or cells with a local TorchScript model that provides the chosen output. Training produces a single instance target using one to three selected channels. Select `weights.pt` from a previous CI DL InstanSeg run to fine-tune it. Use `instanseg.pt` or its containing model folder for prediction. Enter a pixel size override in Advanced settings when needed.
 - Portable launchers can set `CELLPOSE3_LEGACY_LOCAL_MODELS_PATH`, `CELLPOSE_LOCAL_MODELS_PATH` for Cellpose 4, `CI_DL_STARDIST_MODELS` for PyTorch, `STARDIST_LOCAL_MODELS_PATH` for QuPath, and `CI_DL_INSTANSEG_MODELS` to expose local presets.
+
+## Model Manager
+
+Open **Extensions → CI Deep Learning Segmentation → Model Manager** or choose **Model Manager…** in a **Presets** menu. The list shows built-in presets and models registered in the current project or your personal library. **Import model…** registers a file or folder with a name, backend, optional version and source. From Prediction, **Save model & settings…** also saves the channels, downsample, pixel-size override, segmentation target and applicable thresholds.
+
+Successful training runs register their output automatically in the project library. Entries appear in **Presets** on compatible tabs. The project library stores project-local model paths relative to the project folder. Keep a shared checkpoint inside the project when the project will be moved or shared. Removing an entry leaves its checkpoint on disk.
+
+## Compare models
+
+1. Open a test image and select one or more area annotations or TMA cores. For scoring, label the reference instances **Ground truth** inside fully labeled test regions.
+2. Choose a pretrained or trained model on a Prediction tab and click **Set A** in **Compare models**. Choose the other model and click **Set B**. The two slots retain their own model and prediction settings.
+3. Click **Compare**. Drag the divider in the viewer or move the **A/B** slider to see A in teal and B in orange. You can also show both contours together or show only one model. **Clear preview** removes the temporary contours.
+4. Review object counts and runtime. For regions with reference annotations, scoring reports object F1 from single matches at IoU ≥ 0.5, missed and extra detections, and split and merge counts. Use test images held out from training.
+
+## µSAM annotation and CellSAM
+
+Install extra backends in the Python environment that QuPath uses:
+
+```sh
+python -m pip install "micro-sam==1.8.14" "cellSAM @ git+https://github.com/vanvalenlab/cellSAM.git@362a8e521bcd7313d5cb280bcd4cfc12977c1e9f"
+```
+
+- **µSAM.** Toggle **µSAM** in the Training toolbar, or open **µSAM annotation…** from the extension menu. Alt-click inside an object and use Alt+Shift-click to add background points. Review the turquoise preview and click **Add annotation** to create an editable QuPath area annotation. Prompts operate on a 2D crop on the active plane. Choose a channel or RGB. Browse to a local light-microscopy ViT-B checkpoint, or let µSAM obtain its default checkpoint. The portable launcher uses `models/microsam/vit_b_lm.pt`.
+- **CellSAM.** The Prediction tab accepts `cellsam_general`, `cellsam_extra`, or a local CellSAM checkpoint through **Browse…**. The official weights require access to [DeepCell](https://users.deepcell.org/). A local checkpoint works offline. A user who already has DeepCell access can also launch QuPath with `DEEPCELL_ACCESS_TOKEN` configured to let the upstream package obtain the weights. [CellSAM backend and usage](https://github.com/vanvalenlab/cellSAM)
 
 ## Build
 

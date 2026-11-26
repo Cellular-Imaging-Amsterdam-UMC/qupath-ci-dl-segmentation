@@ -41,9 +41,11 @@ final class ModelForm {
     final Engine engine;
     private final boolean training;
     private final Window window;
+    private final ModelLibrary library;
     private final TextField python = new TextField();
     private final ComboBox<String> device = new ComboBox<>();
     private final StringProperty model = new SimpleStringProperty();
+    private final StringProperty modelAlias = new SimpleStringProperty("");
     private final ComboBox<Channels.Choice> primary = new ComboBox<>();
     private final ComboBox<Channels.Choice> secondary = new ComboBox<>();
     private final ComboBox<Channels.Choice> third = new ComboBox<>();
@@ -73,12 +75,17 @@ final class ModelForm {
     private final TextField sigma = new TextField("1.5");
 
     ModelForm(Engine engine, boolean training, Window window, StringProperty pythonPath) {
+        this(engine, training, window, pythonPath, null);
+    }
+
+    ModelForm(Engine engine, boolean training, Window window, StringProperty pythonPath, ModelLibrary library) {
         this.engine = engine;
         this.training = training;
         this.window = window;
+        this.library = library;
         if (engine.usesPython(training))
             python.textProperty().bindBidirectional(pythonPath);
-        model.set(engine.defaultModel(training));
+        selectModel(engine.defaultModel(training));
         device.getItems().setAll("Auto", "CPU", "CUDA");
         device.getSelectionModel().selectFirst();
         secondary.getItems().add(Channels.NONE);
@@ -160,7 +167,7 @@ final class ModelForm {
             } else if (engine == Engine.INSTANSEG) {
                 add(parameters, "Segmentation target", target);
             } else {
-                add(parameters, "Probability threshold", threshold);
+                add(parameters, engine == Engine.CELLSAM ? "Box confidence threshold" : "Probability threshold", threshold);
                 if (engine == Engine.STARDIST)
                     add(parameters, "Overlap threshold (NMS)", nms);
             }
@@ -168,7 +175,8 @@ final class ModelForm {
                 add(parameters, "Minimum peak distance (model pixels)", distance);
                 add(parameters, "Spot marker radius (image pixels)", radius);
             } else {
-                add(parameters, "Cell expansion (image pixels)", expansion);
+                if (engine != Engine.CELLSAM)
+                    add(parameters, "Cell expansion (image pixels)", expansion);
                 add(parameters, null, annotations);
                 add(parameters, null, measurements);
             }
@@ -250,7 +258,7 @@ final class ModelForm {
         display.setMaxWidth(Double.MAX_VALUE);
         display.setTextOverrun(OverrunStyle.CENTER_ELLIPSIS);
         display.textProperty().bind(Bindings.createStringBinding(
-                () -> model.get().isBlank() ? empty : modelDisplayName(model.get()), model));
+                () -> model.get().isBlank() ? empty : selectedModelName(), model, modelAlias));
 
         var tooltip = new Tooltip();
         tooltip.setWrapText(true);
@@ -287,23 +295,117 @@ final class ModelForm {
         row.setAlignment(Pos.CENTER_LEFT);
         HBox.setHgrow(display, Priority.ALWAYS);
         var presets = engine.modelPresets(training);
-        if (!presets.isEmpty() || canTrainFromScratch()) {
+        if (!presets.isEmpty() || canTrainFromScratch() || library != null) {
             var menu = new MenuButton("Presets");
             if (canTrainFromScratch()) {
                 var scratch = new MenuItem("Train from scratch");
-                scratch.setOnAction(event -> model.set(""));
+                scratch.setOnAction(event -> selectModel(""));
                 menu.getItems().add(scratch);
                 if (!presets.isEmpty())
                     menu.getItems().add(new SeparatorMenuItem());
             }
             for (var preset : presets) {
                 var item = new MenuItem(preset);
-                item.setOnAction(event -> model.set(engine.modelChoice(preset, training)));
+                item.setOnAction(event -> selectModel(engine.modelChoice(preset, training)));
                 menu.getItems().add(item);
+            }
+            if (library != null) {
+                var fixed = List.copyOf(menu.getItems());
+                menu.setOnShowing(event -> populatePresets(menu, fixed));
             }
             row.getChildren().add(menu);
         }
         return row;
+    }
+
+    private void populatePresets(MenuButton menu, List<MenuItem> fixed) {
+        menu.getItems().setAll(fixed);
+        try {
+            var entries = library.entries().stream().filter(choice -> choice.entry().engine() == engine).toList();
+            if (!entries.isEmpty() && !fixed.isEmpty())
+                menu.getItems().add(new SeparatorMenuItem());
+            for (var choice : entries) {
+                var item = new MenuItem(choice.toString());
+                item.setDisable(!library.available(choice, training));
+                item.setOnAction(event -> applyPreset(choice));
+                menu.getItems().add(item);
+            }
+        } catch (java.io.IOException e) {
+            var unavailable = new MenuItem(e.getMessage());
+            unavailable.setDisable(true);
+            menu.getItems().add(unavailable);
+        }
+        if (!menu.getItems().isEmpty())
+            menu.getItems().add(new SeparatorMenuItem());
+        if (!training) {
+            var save = new MenuItem("Save model & settings…");
+            save.setOnAction(event -> {
+                try {
+                    library.saveCurrent(window, prediction());
+                } catch (IllegalArgumentException e) {
+                    var alert = new javafx.scene.control.Alert(javafx.scene.control.Alert.AlertType.WARNING, e.getMessage());
+                    alert.initOwner(window);
+                    alert.show();
+                }
+            });
+            menu.getItems().add(save);
+        }
+        var manage = new MenuItem("Model Manager…");
+        manage.setOnAction(event -> library.show(window));
+        menu.getItems().add(manage);
+    }
+
+    private void applyPreset(ModelLibrary.Choice choice) {
+        selectModel(library.resolve(choice, training));
+        var entry = choice.entry();
+        modelAlias.set(entry.name() + (entry.version().isBlank() ? "" : " · " + entry.version()));
+        var settings = choice.entry().options();
+        if (settings == null)
+            return;
+        if (settings.channels() != null) {
+            applyChannel(primary, settings.channels().primary());
+            applyChannel(secondary, settings.channels().secondary());
+            applyChannel(third, settings.channels().third());
+        }
+        setValue(downsample, settings.downsample());
+        setValue(pixelSize, settings.pixelSize());
+        setValue(mean, settings.mean());
+        setValue(gaussian, settings.gaussian());
+        if (!training && settings.cells() != null) {
+            target.setValue(settings.cells() ? "Cells" : "Nuclei");
+            threshold.setText(settings.threshold() == null ? "" : settings.threshold().toString());
+            nms.setText(settings.nms() == null ? "" : settings.nms().toString());
+            setValue(diameter, settings.diameter());
+            setValue(flow, settings.flow());
+            setValue(distance, settings.minDistance());
+            if (engine == Engine.SPOTIFLOW)
+                setValue(radius, settings.spotRadius());
+            setValue(expansion, settings.expansion());
+            if (settings.excludeBorder() != null)
+                excludeBorder.setSelected(settings.excludeBorder());
+        }
+    }
+
+    private static void setValue(TextField field, Number value) {
+        if (value != null)
+            field.setText(value.toString());
+    }
+
+    private static void applyChannel(ComboBox<Channels.Choice> combo, Channels.Choice saved) {
+        if (saved == null)
+            return;
+        combo.setValue(combo.getItems().stream().filter(choice -> choice.equals(saved)).findFirst()
+                .or(() -> combo.getItems().stream().filter(choice -> choice.name().equals(saved.name())).findFirst())
+                .orElse(null));
+    }
+
+    private void selectModel(String location) {
+        modelAlias.set("");
+        model.set(location);
+    }
+
+    String selectedModelName() {
+        return modelAlias.get().isBlank() ? modelDisplayName(model.get()) : modelAlias.get();
     }
 
     static String modelDisplayName(String selection) {
@@ -329,18 +431,18 @@ final class ModelForm {
             chooser.setInitialDirectory(initial.toFile());
         var selected = chooser.showDialog(window);
         if (selected != null)
-            model.set(selected.getAbsolutePath());
+            selectModel(selected.getAbsolutePath());
     }
 
     private void browseModelFile() {
         var chooser = fileChooser("Choose " + engine.title + " model", model.get(), engine.modelDirectory(training));
         if (engine == Engine.STARDIST_QP && !training)
             chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("StarDist model", "*.pb", "*.onnx"));
-        if (engine == Engine.INSTANSEG)
-            chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("InstanSeg model", "*.pt"));
+        if (engine == Engine.INSTANSEG || engine == Engine.CELLSAM)
+            chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter(engine.title + " checkpoint", "*.pt", "*.pth"));
         var selected = chooser.showOpenDialog(window);
         if (selected != null)
-            model.set(selected.getAbsolutePath());
+            selectModel(selected.getAbsolutePath());
     }
 
     private static FileChooser fileChooser(String title, String selection, Path directory) {
@@ -371,7 +473,11 @@ final class ModelForm {
     }
 
     static StringProperty pythonPreference(Engine engine) {
-        String value = System.getenv("CI_DL_" + engine.id.toUpperCase(Locale.ROOT).replace('-', '_') + "_PYTHON");
+        return pythonPreference(engine.id);
+    }
+
+    static StringProperty pythonPreference(String engineId) {
+        String value = System.getenv("CI_DL_" + engineId.toUpperCase(Locale.ROOT).replace('-', '_') + "_PYTHON");
         if (value == null) {
             String base = System.getenv("QUPATH_BASE");
             if (base != null) {
@@ -380,7 +486,7 @@ final class ModelForm {
                     value = path.toString();
             }
         }
-        return PathPrefs.createPersistentPreference("ci.dl." + engine.id + ".python", value == null ? "" : value);
+        return PathPrefs.createPersistentPreference("ci.dl." + engineId + ".python", value == null ? "" : value);
     }
 
     void updateChannels(List<Channels.Choice> choices) {
@@ -432,7 +538,7 @@ final class ModelForm {
     Prediction.Settings prediction() {
         boolean cell = engine.isCellpose();
         boolean spot = engine == Engine.SPOTIFLOW;
-        boolean cells = engine == Engine.INSTANSEG && "Cells".equals(target.getValue());
+        boolean cells = engine == Engine.CELLSAM || engine == Engine.INSTANSEG && "Cells".equals(target.getValue());
         Double prob = threshold.getText().isBlank() && engine != Engine.STARDIST_QP ? null
                 : decimal(threshold, "Threshold", cell ? -20 : 0, cell ? 20 : 1);
         return new Prediction.Settings(engine, executable(), resolvedModel(), device(), channels(),

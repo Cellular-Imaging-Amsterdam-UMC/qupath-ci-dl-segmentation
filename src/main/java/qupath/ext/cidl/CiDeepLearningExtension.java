@@ -19,21 +19,27 @@ public final class CiDeepLearningExtension implements QuPathExtension {
         var pythonPaths = new java.util.EnumMap<Engine, javafx.beans.property.StringProperty>(Engine.class);
         for (var engine : Engine.values())
             pythonPaths.put(engine, ModelForm.pythonPreference(engine));
+        var library = new ModelLibrary(qupath);
+        var microSam = new MicroSamTool(qupath, ModelForm.pythonPreference("microsam"));
         var menu = new Menu("CI Deep Learning Segmentation");
         menu.setGraphic(WindowIcon.view(16));
         var predict = new MenuItem("Prediction…");
         var train = new MenuItem("Training…");
         predict.setOnAction(event -> {
             if (prediction == null)
-                prediction = new Workspace(qupath, false, pythonPaths);
+                prediction = new Workspace(qupath, false, pythonPaths, library, microSam);
             prediction.show();
         });
         train.setOnAction(event -> {
             if (training == null)
-                training = new Workspace(qupath, true, pythonPaths);
+                training = new Workspace(qupath, true, pythonPaths, library, microSam);
             training.show();
         });
-        menu.getItems().addAll(predict, train);
+        var models = new MenuItem("Model Manager…");
+        models.setOnAction(event -> library.show(qupath.getStage()));
+        var prompt = new MenuItem("µSAM annotation…");
+        prompt.setOnAction(event -> microSam.show());
+        menu.getItems().addAll(predict, train, models, prompt);
         qupath.getMenu("Extensions", true).getItems().add(menu);
     }
 
@@ -44,7 +50,7 @@ public final class CiDeepLearningExtension implements QuPathExtension {
 
     @Override
     public String getDescription() {
-        return "Predict and train Cellpose, StarDist, InstanSeg and Spotiflow models.";
+        return "Predict, compare and train segmentation models, and annotate interactively with µSAM.";
     }
 
     @Override

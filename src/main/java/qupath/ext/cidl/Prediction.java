@@ -37,15 +37,7 @@ final class Prediction {
     private record Export(PatchIO.Patch patch, RegionRequest request, Path output) {}
 
     static void run(Job job, ImageData<BufferedImage> image, List<Region> regions, Settings s) throws Exception {
-        var server = image.getServer();
-        var channels = s.channels().resolve(server);
-        List<List<PathObject>> results;
-        if (s.engine() == Engine.STARDIST_QP) {
-            job.log("Running StarDist on " + regions.size() + " selected region(s).");
-            results = starDist(job, image, regions, s, channels.getFirst());
-        } else {
-            results = runPython(job, image, regions, s, channels);
-        }
+        var results = compute(job, image, regions, s);
         job.apply(() -> {
             var hierarchy = image.getHierarchy();
             for (var region : regions) {
@@ -77,6 +69,21 @@ final class Prediction {
                 hierarchy.fireHierarchyChangedEvent(Prediction.class);
             job.log("Added " + total + " object(s).");
         });
+    }
+
+    static List<List<PathObject>> compute(Job job, ImageData<BufferedImage> image, List<Region> regions, Settings s)
+            throws Exception {
+        var channels = s.channels().resolve(image.getServer());
+        if (s.engine() == Engine.STARDIST_QP)
+            return starDist(job, image, regions, s, channels.getFirst());
+        return runPython(job, image, regions, s, channels);
+    }
+
+    static List<Region> selectedRegions(ImageData<BufferedImage> data) {
+        return data.getHierarchy().getSelectionModel().getSelectedObjects().stream()
+                .filter(object -> (object.isAnnotation() || object.isTMACore()) && object.hasROI()
+                        && object.getROI().isArea() && !object.getROI().isEmpty())
+                .map(object -> new Region(object, object.getROI())).toList();
     }
 
     private static PathObject root(PathObject object) {
