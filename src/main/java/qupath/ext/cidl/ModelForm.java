@@ -48,6 +48,7 @@ final class ModelForm {
     private final StringProperty model = new SimpleStringProperty();
     private final StringProperty modelAlias = new SimpleStringProperty("");
     private final ComboBox<Channels.Choice> primary = new ComboBox<>();
+    private final Label trainingImageNotice = new Label("Add at least one project image above to choose channels.");
     private final ComboBox<Channels.Choice> secondary = new ComboBox<>();
     private final ComboBox<Channels.Choice> third = new ComboBox<>();
     private final TextField downsample = new TextField("1");
@@ -137,6 +138,13 @@ final class ModelForm {
         if (training)
             add(input, "New model name", name);
         add(input, "Image channel", primary);
+        if (training) {
+            trainingImageNotice.setId("training-channel-notice");
+            trainingImageNotice.setWrapText(true);
+            trainingImageNotice.getStyleClass().add("note");
+            trainingImageNotice.managedProperty().bind(trainingImageNotice.visibleProperty());
+            add(input, null, trainingImageNotice);
+        }
         if (engine.usesSecondaryChannel())
             add(input, "Secondary channel", secondary);
         if (engine.usesThirdChannel())
@@ -551,6 +559,13 @@ final class ModelForm {
             }
         }
         return PathPrefs.createPersistentPreference("ci.dl." + engineId + ".python", value == null ? "" : value);
+    }
+
+    void setTrainingImagesSelected(boolean selected) {
+        trainingImageNotice.setVisible(!selected);
+        primary.setDisable(!selected);
+        secondary.setDisable(!selected);
+        third.setDisable(!selected);
     }
 
     void updateChannels(List<Channels.Choice> choices) {

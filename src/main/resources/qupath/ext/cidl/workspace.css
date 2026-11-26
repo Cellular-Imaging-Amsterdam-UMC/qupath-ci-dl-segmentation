@@ -187,3 +187,8 @@
 .ci-dl.model-manager .list-view .list-cell:filled:selected .label {
     -fx-text-fill: #edf6f5;
 }
+
+.ci-dl .training-summary {
+    -fx-font-weight: bold;
+    -fx-padding: 0 0 2 0;
+}

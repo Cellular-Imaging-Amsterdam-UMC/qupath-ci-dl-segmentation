@@ -2,6 +2,8 @@ package qupath.ext.cidl;
 
 import javafx.application.Platform;
 import javafx.beans.property.StringProperty;
+import javafx.beans.value.ChangeListener;
+import javafx.collections.ListChangeListener;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
@@ -28,6 +30,7 @@ import org.controlsfx.glyphfont.FontAwesome;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.gui.dialogs.ProjectDialogs;
 import qupath.lib.gui.tools.IconFactory;
+import qupath.lib.gui.viewer.QuPathViewer;
 import qupath.lib.images.ImageData;
 import qupath.lib.images.servers.ServerTools;
 import qupath.lib.objects.PathObject;
@@ -36,12 +39,13 @@ import qupath.lib.objects.classes.PathClass;
 import qupath.lib.objects.hierarchy.PathObjectHierarchy;
 import qupath.lib.objects.hierarchy.events.PathObjectHierarchyListener;
 import qupath.lib.projects.ProjectImageEntry;
-import qupath.lib.roi.RectangleROI;
+
 
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CancellationException;
@@ -60,6 +64,8 @@ final class Workspace {
     private final Label status = new Label("Ready");
     private final Label context = new Label();
     private final Button chooseImages = new Button("Choose images…");
+    private final Button addCurrentImage = new Button("Add current open image");
+    private final Tooltip addCurrentTooltip = new Tooltip();
     private final Button addClasses = new Button("Add region classes");
     private final Button addTraining = new Button("Add Training Rectangle");
     private final Button addValidation = new Button("Add Validation Rectangle");
@@ -68,6 +74,13 @@ final class Workspace {
     private final Button cancel = new Button("Stop");
     private final LossChart loss;
     private final List<ProjectImageEntry<BufferedImage>> selected = new ArrayList<>();
+    private final TrainingSelectionSummary trainingSummary;
+    private final HashSet<QuPathViewer> observedTrainingViewers = new HashSet<>();
+    private final ChangeListener<ImageData<BufferedImage>> trainingViewerListener =
+            (observable, before, after) -> Platform.runLater(() -> {
+                if (stage.isShowing())
+                    updateContext();
+            });
     private final ConcurrentLinkedQueue<String> pending = new ConcurrentLinkedQueue<>();
     private final AtomicBoolean logScheduled = new AtomicBoolean();
     private final AtomicBoolean rectangleRefreshScheduled = new AtomicBoolean();
@@ -97,6 +110,7 @@ final class Workspace {
         this.qupath = qupath;
         this.training = training;
         this.loss = training ? new LossChart() : null;
+        this.trainingSummary = training ? new TrainingSelectionSummary() : null;
         var heading = training ? "Training" : "Prediction";
         stage.initOwner(qupath.getStage());
         stage.setTitle("CI Deep Learning Segmentation · " + heading);
@@ -137,7 +151,15 @@ final class Workspace {
         var top = new VBox(header);
         var expandedDetails = new ArrayList<Node>();
         if (training) {
+            chooseImages.setGraphic(IconFactory.createNode(FontAwesome.Glyph.PICTURE_ALT, 14));
+            addCurrentImage.setGraphic(IconFactory.createNode(FontAwesome.Glyph.PLUS_CIRCLE, 14));
+            addClasses.setGraphic(IconFactory.createNode(FontAwesome.Glyph.TAGS, 14));
+            addTraining.setGraphic(IconFactory.createNode(FontAwesome.Glyph.SQUARE_ALT, 14));
+            addValidation.setGraphic(IconFactory.createNode(FontAwesome.Glyph.CHECK_SQUARE_ALT, 14));
             chooseImages.setOnAction(event -> chooseImages());
+            addCurrentImage.setId("add-current-training-image");
+            addCurrentImage.setTooltip(addCurrentTooltip);
+            addCurrentImage.setOnAction(event -> addCurrentImage());
             addClasses.setOnAction(event -> addClasses());
             addTraining.setOnAction(event -> addRectangle("Training"));
             addValidation.setOnAction(event -> addRectangle("Validation"));
@@ -147,7 +169,8 @@ final class Workspace {
             toggleRectangleLocks.setMaxWidth(32);
             toggleRectangleLocks.setTooltip(new Tooltip());
             toggleRectangleLocks.setOnAction(event -> toggleRectangleLocks());
-            var actions = new FlowPane(8, 6, chooseImages, addClasses, addTraining, addValidation, toggleRectangleLocks, microSam.toggle());
+            var actions = new FlowPane(8, 6, chooseImages, addCurrentImage, addClasses, addTraining,
+                    addValidation, toggleRectangleLocks, microSam.toggle());
             var instruction = new Label();
             var selectedTab = tabs.getSelectionModel().selectedItemProperty();
             instruction.textProperty().bind(javafx.beans.binding.Bindings.createStringBinding(() -> {
@@ -162,7 +185,7 @@ final class Workspace {
             }, selectedTab));
             instruction.setWrapText(true);
             instruction.getStyleClass().add("note");
-            var toolbar = card("Training images", actions, instruction);
+            var toolbar = card("Training images", trainingSummary.label(), actions, instruction);
             VBox.setMargin(toolbar, new Insets(8, 10, 0, 10));
             top.getChildren().add(toolbar);
             expandedDetails.addAll(List.of(toolbar.getChildren().getFirst(), instruction));
@@ -216,7 +239,21 @@ final class Workspace {
 
         qupath.imageDataProperty().addListener((value, before, after) -> updateContext());
         if (training) {
-            stage.showingProperty().addListener((value, before, after) -> observeRectangleHierarchy());
+            stage.showingProperty().addListener((value, before, after) -> {
+                observeTrainingViewers();
+                if (after)
+                    updateContext();
+                else {
+                    trainingSummary.clear();
+                    observeRectangleHierarchy();
+                }
+            });
+            qupath.getAllViewers().addListener((ListChangeListener<QuPathViewer>) change -> {
+                if (stage.isShowing()) {
+                    observeTrainingViewers();
+                    Platform.runLater(this::updateContext);
+                }
+            });
             qupath.projectProperty().addListener((value, before, after) -> {
                 selected.clear();
                 updateContext();
@@ -316,34 +353,61 @@ final class Workspace {
         return box;
     }
 
+    private void observeTrainingViewers() {
+        var viewers = stage.isShowing() ? List.copyOf(qupath.getAllViewers()) : List.<QuPathViewer>of();
+        observedTrainingViewers.removeIf(viewer -> {
+            if (viewers.contains(viewer))
+                return false;
+            viewer.imageDataProperty().removeListener(trainingViewerListener);
+            return true;
+        });
+        for (var viewer : viewers) {
+            if (observedTrainingViewers.add(viewer))
+                viewer.imageDataProperty().addListener(trainingViewerListener);
+        }
+    }
+
     private void updateContext() {
         var data = qupath.getImageData();
         List<Channels.Choice> channels = List.of();
         if (training) {
             var project = qupath.getProject();
+            if (project == null)
+                selected.clear();
+            else
+                selected.removeIf(entry -> !project.getImageList().contains(entry));
+            var entry = project == null || data == null ? null : project.getEntry(data);
             chooseImages.setDisable(active != null || project == null);
+            boolean alreadySelected = selected.contains(entry);
+            addCurrentImage.setDisable(active != null || entry == null || alreadySelected);
+            addCurrentTooltip.setText(project == null ? "Open a QuPath project first."
+                    : data == null ? "Open an image from the project."
+                    : entry == null ? "This image is outside the active project."
+                    : alreadySelected ? "This image is already selected for training."
+                    : "Include the open project image in the training selection.");
             addClasses.setDisable(active != null || project == null);
             addTraining.setDisable(active != null || data == null);
             addValidation.setDisable(active != null || data == null);
+            run.setDisable(active != null || selected.isEmpty());
             observeRectangleHierarchy();
+
+            Map<ProjectImageEntry<BufferedImage>, ImageData<BufferedImage>> open =
+                    project == null || selected.isEmpty() ? Map.of() : openImages();
+            if (stage.isShowing())
+                trainingSummary.update(selected, open);
             if (project == null) {
-                context.setText("Open a QuPath project to select training images.");
+                context.setText("Open a QuPath project to add training images.");
+            } else if (selected.isEmpty()) {
+                context.setText("Add at least one image to start training.");
             } else {
-                selected.removeIf(entry -> !project.getImageList().contains(entry));
-                if (selected.isEmpty()) {
-                    context.setText("Choose the project images to use for training.");
-                } else {
-                    var entries = openImages();
-                    var entry = data == null ? null : project.getEntry(data);
-                    var reference = selected.contains(entry) ? entry : selected.getFirst();
-                    var live = entries.get(reference);
-                    var metadata = live != null ? live.getServer().getMetadata()
-                            : reference.getServerBuilder().getMetadata().orElse(null);
-                    if (metadata != null)
-                        channels = Channels.choices(metadata);
-                    context.setText(selected.size() + " image(s) selected · Channels from " + reference.getImageName()
-                            + (channels.isEmpty() ? " · Open this image to list its channels." : ""));
-                }
+                var reference = alreadySelected ? entry : selected.getFirst();
+                var live = open.get(reference);
+                var metadata = live != null ? live.getServer().getMetadata()
+                        : reference.getServerBuilder().getMetadata().orElse(null);
+                if (metadata != null)
+                    channels = Channels.choices(metadata);
+                context.setText("Channels from " + reference.getImageName()
+                        + (channels.isEmpty() ? " · Open this image to load its channels." : ""));
             }
         } else if (data == null) {
             context.setText("Open an image and select one or more area annotations.");
@@ -351,8 +415,24 @@ final class Workspace {
             context.setText(ServerTools.getDisplayableImageName(data.getServer()) + " · Predictions use selected area annotations.");
             channels = Channels.choices(data.getServer());
         }
-        for (var form : forms.values())
+        for (var form : forms.values()) {
             form.updateChannels(channels);
+            if (training)
+                form.setTrainingImagesSelected(!selected.isEmpty());
+        }
+    }
+
+    private void addCurrentImage() {
+        var project = qupath.getProject();
+        var data = qupath.getImageData();
+        if (active != null || project == null || data == null)
+            return;
+        var entry = project.getEntry(data);
+        if (entry != null && !selected.contains(entry)) {
+            selected.add(entry);
+            updateContext();
+            status.setText("Added " + entry.getImageName() + " to training images.");
+        }
     }
 
     private void chooseImages() {
@@ -430,7 +510,7 @@ final class Workspace {
     }
 
     private void refreshRectangleLockIndicator() {
-        var rectangles = rectangleHierarchy == null ? List.<PathObject>of() : regionRectangles(rectangleHierarchy);
+        var rectangles = rectangleHierarchy == null ? List.<PathObject>of() : TrainingSelectionSummary.rectangles(rectangleHierarchy);
         boolean hasRectangles = !rectangles.isEmpty();
         boolean allLocked = hasRectangles && rectangles.stream().allMatch(PathObject::isLocked);
         var glyph = allLocked ? FontAwesome.Glyph.LOCK : FontAwesome.Glyph.UNLOCK;
@@ -453,20 +533,11 @@ final class Workspace {
         toggleRectangleLocks.setDisable(active != null || !hasRectangles);
     }
 
-    private static List<PathObject> regionRectangles(PathObjectHierarchy hierarchy) {
-        var trainingClass = PathClass.fromString("Training");
-        var validationClass = PathClass.fromString("Validation");
-        return hierarchy.getAnnotationObjects().stream()
-                .filter(object -> object.getROI() instanceof RectangleROI)
-                .filter(object -> trainingClass.equals(object.getPathClass()) || validationClass.equals(object.getPathClass()))
-                .toList();
-    }
-
     private void toggleRectangleLocks() {
         var hierarchy = rectangleHierarchy;
         if (active != null || hierarchy == null)
             return;
-        var rectangles = regionRectangles(hierarchy);
+        var rectangles = TrainingSelectionSummary.rectangles(hierarchy);
         if (rectangles.isEmpty())
             return;
         boolean lock = !rectangles.stream().allMatch(PathObject::isLocked);
@@ -492,6 +563,12 @@ final class Workspace {
                 if (entry != null)
                     result.put(entry, data);
             }
+        }
+        var current = qupath.getImageData();
+        if (current != null) {
+            var entry = project.getEntry(current);
+            if (entry != null)
+                result.put(entry, current);
         }
         return result;
     }
@@ -557,6 +634,7 @@ final class Workspace {
             comparisonPane.setDisable(true);
         tabs.setDisable(true);
         chooseImages.setDisable(true);
+        addCurrentImage.setDisable(true);
         addClasses.setDisable(true);
         addTraining.setDisable(true);
         addValidation.setDisable(true);
