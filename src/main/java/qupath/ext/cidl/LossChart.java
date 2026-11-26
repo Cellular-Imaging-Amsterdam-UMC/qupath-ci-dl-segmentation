@@ -4,6 +4,11 @@ import javafx.scene.chart.LineChart;
 import javafx.scene.chart.NumberAxis;
 import javafx.scene.chart.XYChart;
 import javafx.scene.control.CheckBox;
+import javafx.scene.control.Label;
+import javafx.geometry.Pos;
+import javafx.scene.layout.HBox;
+import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 
 import java.util.ArrayList;
@@ -33,6 +38,7 @@ final class LossChart {
         y.setLabel("Loss");
         y.setMinorTickVisible(false);
         chart.setAnimated(false);
+        chart.setLegendVisible(false);
         chart.setMinHeight(135);
         chart.setPrefHeight(220);
         chart.getStyleClass().add("loss-chart");
@@ -46,9 +52,21 @@ final class LossChart {
     }
 
     VBox content() {
-        var card = Workspace.card("Training & validation loss", chart, fitAll);
-        VBox.setVgrow(chart, javafx.scene.layout.Priority.ALWAYS);
+        var spacer = new Region();
+        HBox.setHgrow(spacer, Priority.ALWAYS);
+        var legend = new HBox(12, key("Training", "training-key"), key("Validation", "validation-key"), spacer, fitAll);
+        legend.setAlignment(Pos.CENTER_LEFT);
+        var card = Workspace.card("Training & validation loss", chart, legend);
+        VBox.setVgrow(chart, Priority.ALWAYS);
         return card;
+    }
+
+    private static HBox key(String title, String color) {
+        var swatch = new Region();
+        swatch.getStyleClass().addAll("loss-key", color);
+        var key = new HBox(5, swatch, new Label(title));
+        key.setAlignment(Pos.CENTER_LEFT);
+        return key;
     }
 
     void clear() {
@@ -128,9 +146,13 @@ final class LossChart {
                 visible.forEach(point -> values.add(point.getYValue().doubleValue()));
         }
         var range = range(values.stream().mapToDouble(Double::doubleValue), lastEpoch < 10);
-        y.setLowerBound(range.lower());
-        y.setUpperBound(range.upper());
-        y.setTickUnit((range.upper() - range.lower()) / 5);
+        double desired = (range.upper() - range.lower()) / 4;
+        double scale = Math.pow(10, Math.floor(Math.log10(desired)));
+        double normalized = desired / scale;
+        double tick = (normalized < 1.5 ? 1 : normalized < 3 ? 2 : normalized < 7 ? 5 : 10) * scale;
+        y.setLowerBound(Math.floor(range.lower() / tick) * tick);
+        y.setUpperBound(Math.ceil(range.upper() / tick) * tick);
+        y.setTickUnit(tick);
     }
 
     private boolean outsideRange(XYChart.Data<Number, Number> point) {

@@ -100,3 +100,11 @@
     -fx-stroke-line-cap: round;
     -fx-stroke-line-join: round;
 }
+
+.ci-dl .loss-key {
+    -fx-min-width: 10;
+    -fx-min-height: 5;
+    -fx-background-radius: 2;
+}
+.ci-dl .training-key { -fx-background-color: #269486; }
+.ci-dl .validation-key { -fx-background-color: #c97b28; }
