@@ -1,4 +1,5 @@
 """Run the model APIs for a single QuPath job."""
+from collections import OrderedDict
 import importlib
 import inspect
 import json
@@ -346,28 +347,51 @@ class MicroSamPredictor:
         weights = config["model"] or None
         if weights and not Path(weights).is_file():
             raise FileNotFoundError("Choose an accessible µSAM checkpoint file.")
-        print("µSAM · Loading ViT-B checkpoint", flush=True)
-        self.predictor = get_sam_model(model_type="vit_b_lm", device=device, checkpoint_path=weights)
+        model_type = config.get("model_type", "vit_b_lm")
+        print("µSAM · Loading checkpoint", flush=True)
+        self.predictor = get_sam_model(model_type=model_type, device=device, checkpoint_path=weights)
         self.embedding_key = None
+        self.embeddings = OrderedDict()
 
-    def predict(self, config):
+    def prepare(self, config):
         import torch
-        from scipy.ndimage import label
+        from micro_sam.util import set_precomputed
 
-        patch = config["patches"][0]
         key = config.get("embedding_key")
-        points = np.array([[item["x"], item["y"]] for item in config["prompts"]], dtype=np.float32)
-        labels = np.array([item["label"] for item in config["prompts"]], dtype=np.int32)
+        key = None if key is None else json.dumps(key)
+        if key is not None and self.embedding_key == key:
+            return
         with torch.inference_mode():
-            if key is None or self.embedding_key != key:
-                print("µSAM · Computing image embedding", flush=True)
-                data = load_image(patch, config)
+            if key is not None and key in self.embeddings:
+                self.embeddings.move_to_end(key)
+                set_precomputed(self.predictor, self.embeddings[key])
+            else:
+                print("µSAM · Preparing image area", flush=True)
+                data = load_image(config["patches"][0], config)
                 low, high = np.percentile(data, (1, 99.8), axis=(0, 1))
                 normalized = np.uint8(255 * np.clip((data - low) / np.maximum(high - low, 1e-12), 0, 1))
                 if data.shape[-1] == 1:
                     normalized = np.repeat(normalized, 3, axis=-1)
                 self.predictor.set_image(normalized)
-                self.embedding_key = key
+                if key is not None:
+                    self.embeddings[key] = {
+                        "features": self.predictor.get_image_embedding(),
+                        "input_size": self.predictor.input_size,
+                        "original_size": self.predictor.original_size,
+                    }
+                    if len(self.embeddings) > 4:
+                        self.embeddings.popitem(last=False)
+        self.embedding_key = key
+
+    def predict(self, config):
+        import torch
+        from scipy.ndimage import label
+
+        self.prepare(config)
+        patch = config["patches"][0]
+        points = np.array([[item["x"], item["y"]] for item in config["prompts"]], dtype=np.float32)
+        labels = np.array([item["label"] for item in config["prompts"]], dtype=np.int32)
+        with torch.inference_mode():
             masks, scores, _ = self.predictor.predict(point_coords=points, point_labels=labels, multimask_output=True)
         foreground = points[labels == 1][0]
         x, y = map(int, foreground)
@@ -392,7 +416,10 @@ def microsam_session():
             config = json.loads(line)
             if predictor is None:
                 predictor = MicroSamPredictor(config, select_device(config["device"]))
-            predictor.predict(config)
+            if config.get("prepare_only"):
+                predictor.prepare(config)
+            else:
+                predictor.predict(config)
             result = {"ok": True}
         except Exception as exc:
             result = {"error": f"{type(exc).__name__}: {exc}"}

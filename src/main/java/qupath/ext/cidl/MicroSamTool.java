@@ -4,7 +4,8 @@ import javafx.application.Platform;
 import javafx.beans.binding.Bindings;
 import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.SimpleBooleanProperty;
-import javafx.beans.property.SimpleStringProperty;
+import javafx.beans.property.ObjectProperty;
+import javafx.beans.property.SimpleObjectProperty;
 import javafx.beans.property.StringProperty;
 import javafx.event.EventHandler;
 import javafx.geometry.Insets;
@@ -40,19 +41,21 @@ import java.util.Locale;
 import java.util.Map;
 
 final class MicroSamTool {
-    private record Click(ImageData<BufferedImage> image, QuPathViewer viewer, Point2 point, ImagePlane plane,
-                         List<Integer> channels) {}
+    private record Request(ImageData<BufferedImage> image, QuPathViewer viewer, Point2 point, ImagePlane plane,
+                           List<Integer> channels, boolean prepareOnly) {}
+    private record Model(String type, String path, String name) {}
 
     private static final int PATCH_SIZE = 1024;
     private static final int PATCH_STRIDE = PATCH_SIZE / 2;
-    private static final String DEFAULT_MODEL = "Light microscopy (ViT-B)";
+    private static final String BASE_MODEL = "vit_b_lm";
+    private static final String TINY_MODEL = "vit_t_lm";
 
     private final QuPathGUI qupath;
     private final StringProperty python;
     private final BooleanProperty enabled = new SimpleBooleanProperty(false);
-    private final StringProperty checkpoint = new SimpleStringProperty("");
+    private final ObjectProperty<Model> model = new SimpleObjectProperty<>();
     private final Path modelFolder;
-    private final ArrayDeque<Click> pending = new ArrayDeque<>();
+    private final ArrayDeque<Request> pending = new ArrayDeque<>();
     private final EventHandler<MouseEvent> clickHandler = this::clicked;
     private final EventHandler<MouseEvent> intercept = event -> {
         if (focusClick(event))
@@ -65,6 +68,7 @@ final class MicroSamTool {
     private QuPathViewer viewer;
     private Job active;
     private MicroSamSession session;
+    private boolean warmScheduled;
 
     MicroSamTool(QuPathGUI qupath, StringProperty python) {
         this.qupath = qupath;
@@ -74,7 +78,7 @@ final class MicroSamTool {
         if ((base == null || base.isBlank()) && System.getenv("QUPATH_BASE") != null)
             base = Path.of(System.getenv("QUPATH_BASE"), "models", "microsam").toString();
         modelFolder = base == null || base.isBlank() ? null : Path.of(base);
-        checkpoint.set(defaultCheckpoint());
+        model.set(preset(BASE_MODEL, "Light microscopy · ViT-B"));
         enabled.addListener((obs, before, on) -> {
             if (on)
                 attach();
@@ -86,10 +90,10 @@ final class MicroSamTool {
             updateChannels();
         });
         qupath.getStage().addEventHandler(javafx.stage.WindowEvent.WINDOW_HIDING, event -> enabled.set(false));
-        checkpoint.addListener((obs, before, after) -> reset());
-        python.addListener((obs, before, after) -> reset());
-        channel.valueProperty().addListener((obs, before, after) -> reset());
-        color.selectedProperty().addListener((obs, before, after) -> reset());
+        model.addListener((obs, before, after) -> restart());
+        python.addListener((obs, before, after) -> restart());
+        channel.valueProperty().addListener((obs, before, after) -> scheduleWarmup());
+        color.selectedProperty().addListener((obs, before, after) -> scheduleWarmup());
     }
 
     ToggleButton toggle() {
@@ -177,34 +181,40 @@ final class MicroSamTool {
 
     private HBox modelPicker() {
         var display = ModelForm.modelDisplay(
-                Bindings.createStringBinding(() -> checkpoint.get().isBlank() ? DEFAULT_MODEL
-                        : ModelForm.modelDisplayName(checkpoint.get()), checkpoint),
-                Bindings.createStringBinding(() -> checkpoint.get().isBlank() ? DEFAULT_MODEL : checkpoint.get(), checkpoint));
+                Bindings.createStringBinding(() -> model.get().path().isBlank() ? model.get().name()
+                        : ModelForm.modelDisplayName(model.get().path()), model),
+                Bindings.createStringBinding(() -> model.get().path().isBlank() ? model.get().name() : model.get().path(), model));
         display.setId("ci-microsam-model");
         var browse = new Button("Browse…");
         browse.setOnAction(event -> {
             var chooser = new FileChooser();
-            chooser.setTitle("Choose µSAM ViT-B checkpoint");
+            chooser.setTitle("Choose µSAM checkpoint");
             chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("Checkpoint", "*.pt", "*.pth"));
-            var folder = checkpoint.get().isBlank() ? modelFolder : Path.of(checkpoint.get()).getParent();
+            var folder = model.get().path().isBlank() ? modelFolder : Path.of(model.get().path()).getParent();
             if (folder != null && Files.isDirectory(folder))
                 chooser.setInitialDirectory(folder.toFile());
             var selected = chooser.showOpenDialog(stage);
             if (selected != null)
-                checkpoint.set(selected.getAbsolutePath());
+                browseCheckpoint(selected.toPath());
         });
-        var defaultItem = new MenuItem(DEFAULT_MODEL);
-        defaultItem.setOnAction(event -> checkpoint.set(defaultCheckpoint()));
-        var presets = new MenuButton("Presets", null, defaultItem);
+        var base = presetItem(BASE_MODEL, "Light microscopy · ViT-B");
+        var tiny = presetItem(TINY_MODEL, "Light microscopy · ViT-Tiny");
+        var presets = new MenuButton("Presets", null, base, tiny);
         presets.setOnShowing(event -> {
-            presets.getItems().setAll(defaultItem);
+            presets.getItems().setAll(base, tiny);
             if (modelFolder == null || !Files.isDirectory(modelFolder))
                 return;
             try (var files = Files.list(modelFolder)) {
-                for (var file : files.filter(Files::isRegularFile).filter(MicroSamTool::isLocalPreset).sorted().toList()) {
-                    var item = new MenuItem(file.getFileName().toString());
-                    item.setOnAction(action -> checkpoint.set(file.toAbsolutePath().toString()));
-                    presets.getItems().add(item);
+                for (var file : files.filter(Files::isRegularFile).sorted().toList()) {
+                    var filename = file.getFileName().toString();
+                    var type = backbone(filename);
+                    var name = filename.toLowerCase(Locale.ROOT);
+                    if (type != null && (name.endsWith(".pt") || name.endsWith(".pth"))
+                            && !name.contains("_decoder") && !name.equals(BASE_MODEL + ".pt") && !name.equals(TINY_MODEL + ".pt")) {
+                        var item = new MenuItem(filename);
+                        item.setOnAction(action -> model.set(new Model(type, file.toAbsolutePath().toString(), filename)));
+                        presets.getItems().add(item);
+                    }
                 }
             } catch (IOException e) {
                 status.setText("Could not list local µSAM models.");
@@ -216,15 +226,44 @@ final class MicroSamTool {
         return row;
     }
 
-    private String defaultCheckpoint() {
-        var local = modelFolder == null ? null : modelFolder.resolve("vit_b_lm.pt");
-        return local != null && Files.isRegularFile(local) ? local.toAbsolutePath().toString() : "";
+    private MenuItem presetItem(String type, String name) {
+        var item = new MenuItem(name);
+        item.setOnAction(event -> model.set(preset(type, name)));
+        return item;
     }
 
-    private static boolean isLocalPreset(Path file) {
-        var name = file.getFileName().toString().toLowerCase(Locale.ROOT);
-        return name.startsWith("vit_b_") && !name.contains("_decoder") && !name.equals("vit_b_lm.pt")
-                && (name.endsWith(".pt") || name.endsWith(".pth"));
+    private Model preset(String type, String name) {
+        var local = modelFolder == null ? null : modelFolder.resolve(type + ".pt");
+        return new Model(type, local != null && Files.isRegularFile(local) ? local.toAbsolutePath().toString() : "", name);
+    }
+
+    private void browseCheckpoint(Path checkpoint) {
+        var filename = checkpoint.getFileName().toString();
+        var type = backbone(filename);
+        if (type == null) {
+            var dialog = new ChoiceDialog<>("ViT-B", "ViT-B", "ViT-Tiny", "ViT-L", "ViT-H");
+            dialog.initOwner(stage);
+            dialog.setTitle("µSAM model architecture");
+            dialog.setHeaderText(filename);
+            dialog.setContentText("Image encoder");
+            type = dialog.showAndWait().map(label -> switch (label) {
+                case "ViT-Tiny" -> "vit_t";
+                case "ViT-L" -> "vit_l";
+                case "ViT-H" -> "vit_h";
+                default -> "vit_b";
+            }).orElse(null);
+        }
+        if (type != null)
+            model.set(new Model(type, checkpoint.toAbsolutePath().toString(), filename));
+    }
+
+    private static String backbone(String filename) {
+        var name = filename.toLowerCase(Locale.ROOT);
+        for (var type : List.of("vit_t", "vit_b", "vit_l", "vit_h")) {
+            if (name.startsWith(type + "_") || name.startsWith(type + ".") || name.startsWith("sam_" + type + "_"))
+                return type;
+        }
+        return null;
     }
 
     private void updateChannels() {
@@ -258,7 +297,8 @@ final class MicroSamTool {
         view.addEventFilter(MouseEvent.MOUSE_PRESSED, intercept);
         view.addEventFilter(MouseEvent.MOUSE_RELEASED, intercept);
         view.addEventFilter(MouseEvent.MOUSE_DRAGGED, intercept);
-        status.setText("Alt-click an object in the viewer.");
+        updateChannels();
+        scheduleWarmup();
     }
 
     private void detach() {
@@ -272,6 +312,11 @@ final class MicroSamTool {
         }
         viewer = null;
         status.setText("µSAM is off.");
+    }
+
+    private void restart() {
+        reset();
+        scheduleWarmup();
     }
 
     private void reset() {
@@ -312,18 +357,50 @@ final class MicroSamTool {
         var server = image.getServer();
         if (xy.getX() < 0 || xy.getY() < 0 || xy.getX() >= server.getWidth() || xy.getY() >= server.getHeight())
             return;
-        var channels = color.isSelected() ? List.of(0, 1, 2)
-                : channel.getValue() == null ? List.<Integer>of() : List.of(channel.getValue().index());
+        var channels = selectedChannels();
         if (channels.isEmpty()) {
             status.setText("Choose an image channel first.");
             return;
         }
-        var plane = ImagePlane.getPlane(viewer.getZPosition(), viewer.getTPosition());
-        pending.addLast(new Click(image, viewer, new Point2(xy.getX(), xy.getY()), plane, channels));
+        pending.removeIf(Request::prepareOnly);
+        pending.addLast(new Request(image, viewer, new Point2(xy.getX(), xy.getY()), activePlane(), channels, false));
         if (active == null)
             runNext();
         else
             status.setText("Annotating… " + pending.size() + " in queue");
+    }
+
+    private List<Integer> selectedChannels() {
+        return color.isSelected() ? List.of(0, 1, 2)
+                : channel.getValue() == null ? List.of() : List.of(channel.getValue().index());
+    }
+
+    private ImagePlane activePlane() {
+        return ImagePlane.getPlane(viewer.getZPosition(), viewer.getTPosition());
+    }
+
+    private void scheduleWarmup() {
+        if (!enabled.get() || warmScheduled || viewer == null)
+            return;
+        warmScheduled = true;
+        Platform.runLater(() -> {
+            warmScheduled = false;
+            if (!enabled.get() || viewer == null)
+                return;
+            var image = viewer.getImageData();
+            var channels = selectedChannels();
+            if (image == null || channels.isEmpty())
+                return;
+            var view = viewer.getView();
+            var center = viewer.componentPointToImagePoint(view.getWidth() / 2, view.getHeight() / 2, null, false);
+            var server = image.getServer();
+            double x = Math.clamp(center.getX(), 0, server.getWidth() - 1);
+            double y = Math.clamp(center.getY(), 0, server.getHeight() - 1);
+            pending.removeIf(Request::prepareOnly);
+            pending.addLast(new Request(image, viewer, new Point2(x, y), activePlane(), channels, true));
+            if (active == null)
+                runNext();
+        });
     }
 
     private void runNext() {
@@ -335,7 +412,7 @@ final class MicroSamTool {
             session = new MicroSamSession(executable.isBlank() ? "python" : executable);
         }
         var worker = session;
-        var weights = checkpoint.get();
+        var selection = model.get();
         var job = new Job(line -> {
             if (line.startsWith("µSAM"))
                 Platform.runLater(() -> {
@@ -344,14 +421,18 @@ final class MicroSamTool {
                 });
         });
         active = job;
-        status.setText("Annotating…");
+        status.setText(click.prepareOnly() ? "Preparing µSAM…" : "Annotating…");
         Thread.ofVirtual().name("CI DL µSAM annotation").start(() -> {
             Throwable failure = null;
             try {
-                var roi = compute(job, worker, click, weights);
+                var roi = compute(job, worker, click, selection);
                 job.apply(() -> {
                     if (active != job || click.viewer().getImageData() != click.image())
                         return;
+                    if (click.prepareOnly()) {
+                        status.setText("Ready · Alt-click an object.");
+                        return;
+                    }
                     if (roi == null) {
                         status.setText("No object found at this point.");
                         return;
@@ -382,7 +463,7 @@ final class MicroSamTool {
         });
     }
 
-    private static ROI compute(Job job, MicroSamSession worker, Click click, String weights) throws Exception {
+    private static ROI compute(Job job, MicroSamSession worker, Request click, Model model) throws Exception {
         var server = click.image().getServer();
         int w = Math.min(PATCH_SIZE, server.getWidth());
         int h = Math.min(PATCH_SIZE, server.getHeight());
@@ -395,7 +476,9 @@ final class MicroSamTool {
             var patch = PatchIO.export(job, server, request, click.channels(), work.resolve("sample.image"));
             var destination = work.resolve("sample.prediction");
             var config = new LinkedHashMap<String, Object>();
-            config.put("model", weights);
+            config.put("model", model.path());
+            config.put("model_type", model.type());
+            config.put("prepare_only", click.prepareOnly());
             config.put("device", "auto");
             config.put("patches", List.of(patch.target(destination, "prediction")));
             config.put("embedding_key", List.of(request.getX(), request.getY(), request.getWidth(), request.getHeight(),
@@ -403,6 +486,8 @@ final class MicroSamTool {
             config.put("prompts", List.of(Map.of("x", click.point().getX() - request.getX(),
                     "y", click.point().getY() - request.getY(), "label", 1)));
             worker.predict(job, config);
+            if (click.prepareOnly())
+                return null;
             var labels = PatchIO.readLabels(job, destination, patch.width(), patch.height());
             return ContourTracing.createROIs(SimpleImages.createFloatImage(labels, patch.width(), patch.height()),
                     request, 1, -1).get(1);

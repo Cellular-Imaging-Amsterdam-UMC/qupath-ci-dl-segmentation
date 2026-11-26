@@ -13,7 +13,7 @@ A Java extension with two English-language workspaces under **Extensions → CI 
 2. For the Python backends, prepare an environment and select their Python executables in **Advanced settings** on the corresponding tabs. The executable is remembered for each engine across both windows. If left blank, the extension uses `python` from QuPath's environment.
 3. For StarDist-QP prediction, install the [QuPath StarDist extension](https://github.com/qupath/qupath-extension-stardist) from QuPath's Extension Manager and choose a compatible local model, such as [`dsb2018_heavy_augment.pb`](https://github.com/qupath/models/tree/main/stardist).
 
-The JAR includes the Python backend script. QuPath handles region export, annotation labels, and import of predictions directly. Cellpose and Spotiflow run through their Python packages, with no BIOP extension required.
+The JAR includes the Python backend script. QuPath handles region export, annotation labels, and import of predictions directly. Cellpose and Spotiflow run through their Python packages.
 
 A starting point for a Python 3.11 or 3.12 environment with PyTorch is:
 
@@ -88,8 +88,10 @@ Install extra backends in the Python environment that QuPath uses:
 python -m pip install "micro-sam==1.8.14" "cellSAM @ git+https://github.com/vanvalenlab/cellSAM.git@362a8e521bcd7313d5cb280bcd4cfc12977c1e9f"
 ```
 
-- **µSAM quick annotation.** Enable **µSAM** from the Training toolbar or open **µSAM annotation…** from the extension menu. Alt-click inside an object to add its outline directly as an editable QuPath area annotation. Each click starts a separate annotation on the active image plane. Choose an image channel or RGB. Choose the ViT-B model through **Browse…** or **Presets**, and change the Python executable under **Advanced settings**. The portable launcher uses `models/microsam/vit_b_lm.pt`. The first click loads the model. Later clicks reuse the model and can reuse the embedding for nearby pixels.
+- **µSAM quick annotation.** Enable **µSAM** from the Training toolbar or open **µSAM annotation…** from the extension menu. Alt-click inside an object to add its outline directly as an editable QuPath area annotation. Each click starts a separate annotation on the active image plane. Choose an image channel or RGB. Use **Presets** to choose the light microscopy ViT-B or ViT-Tiny model. The portable bundle includes both checkpoints. **Browse…** opens other compatible µSAM checkpoints. When enabled, µSAM loads the model and prepares the area at the center of the viewer. Channel changes prepare the new input with the model already loaded. µSAM can reuse the most recent image-area embeddings when returning to a previous channel. Change the Python executable under **Advanced settings**.
 - **CellSAM.** The Prediction tab accepts `cellsam_general`, `cellsam_extra`, or a local CellSAM checkpoint through **Browse…**. Download the official 1.2 archive from [Van Valen Lab on Hugging Face](https://huggingface.co/vanvalenlab/cellsam) after accepting the model terms. Extract `cellsam_general.pt` and `cellsam_extra.pt` for offline prediction. In the portable bundle, place them in `models/cellsam/` to pick them up from Presets. [CellSAM backend and usage](https://github.com/vanvalenlab/cellSAM)
+
+ViT-Tiny requires [MobileSAM](https://github.com/ChaoningZhang/MobileSAM). Install it in the same Python environment with `python -m pip install "mobile-sam @ git+https://github.com/ChaoningZhang/MobileSAM.git@f706ad9c4eb7f219c00d9050e46328518ffb65d2"`. The light microscopy weights are listed in the [µSAM documentation](https://computational-cell-analytics.github.io/micro-sam/).
 
 ## Build
 
