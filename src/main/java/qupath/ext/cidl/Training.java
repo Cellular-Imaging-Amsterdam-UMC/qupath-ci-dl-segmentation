@@ -30,7 +30,7 @@ final class Training {
     record Source(ProjectImageEntry<BufferedImage> entry, ImageData<BufferedImage> open, List<Mark> marks) {}
     record Settings(Engine engine, String python, String model, String device, Channels channels, double downsample,
                     Path output, int epochs, double learningRate, int batchSize, double diameter, int minimumMasks,
-                    int crop, double sigma, int mean, double gaussian) {}
+                    int crop, double sigma, int mean, double gaussian, double pixelSize) {}
 
     static List<Mark> snapshot(Collection<? extends PathObject> objects) {
         return objects.stream().filter(PathObject::hasROI)
@@ -133,6 +133,7 @@ final class Training {
                 config.put("sigma", s.sigma());
                 config.put("mean", s.mean());
                 config.put("gaussian", s.gaussian());
+                config.put("pixel_size", s.pixelSize() * s.downsample());
                 job.python(s.python(), work, config);
                 job.apply(() -> {
                     try {
@@ -152,10 +153,19 @@ final class Training {
     }
 
     private static void validateArtifact(Engine engine, Path artifact) throws java.io.IOException {
-        if (engine == Engine.CELLPOSE && Files.isRegularFile(artifact) && Files.size(artifact) > 0)
+        if (engine.isCellpose() && Files.isRegularFile(artifact) && Files.size(artifact) > 0)
             return;
         if (engine == Engine.SPOTIFLOW && Files.isRegularFile(artifact.resolve("config.yaml"))
                 && Files.isRegularFile(artifact.resolve("best.pt")) && Files.isRegularFile(artifact.resolve("thresholds.yaml")))
+            return;
+        if ((engine == Engine.STARDIST || engine == Engine.STARDIST_QP)
+                && Files.isRegularFile(artifact.resolve("weights_best.pt"))
+                && Files.isRegularFile(artifact.resolve("config.json"))
+                && Files.isRegularFile(artifact.resolve("thresholds.json"))
+                && (engine != Engine.STARDIST_QP || Files.isRegularFile(artifact.resolve("model.onnx"))))
+            return;
+        if (engine == Engine.INSTANSEG && Files.isRegularFile(artifact.resolve("instanseg.pt"))
+                && Files.isRegularFile(artifact.resolve("weights.pt")))
             return;
         throw new java.io.IOException("Python finished without producing the expected model files.");
     }
@@ -196,7 +206,7 @@ final class Training {
             var targets = work.resolve(index + ".labels");
             String split = mark.classification().toLowerCase(Locale.ROOT);
             int count;
-            if (s.engine() == Engine.CELLPOSE) {
+            if (s.engine() != Engine.SPOTIFLOW) {
                 count = exportMasks(job, region, request, patch, annotations, targets, label);
                 int min = split.equals("training") ? s.minimumMasks() : 1;
                 if (count < min)

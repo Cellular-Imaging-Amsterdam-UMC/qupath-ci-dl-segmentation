@@ -115,7 +115,7 @@ final class Workspace {
         header.setAlignment(Pos.CENTER_LEFT);
         header.getStyleClass().add("workspace-header");
 
-        var engines = training ? List.of(Engine.CELLPOSE, Engine.SPOTIFLOW) : List.of(Engine.values());
+        var engines = Engine.values();
         for (var engine : engines) {
             var form = new ModelForm(engine, training, stage, pythonPaths.get(engine));
             var tab = new Tab(engine.title, form.content());
@@ -146,9 +146,13 @@ final class Workspace {
             var selectedTab = tabs.getSelectionModel().selectedItemProperty();
             instruction.textProperty().bind(javafx.beans.binding.Bindings.createStringBinding(() -> {
                 String regions = "Lock rectangles before labeling. ";
-                return selectedTab.get() != null && selectedTab.get().getUserData() == Engine.SPOTIFLOW
-                        ? regions + "Mark spots with points. Area annotations contribute their centroids."
-                        : regions + "Draw one area annotation per instance.";
+                if (selectedTab.get() == null)
+                    return regions;
+                return switch ((Engine) selectedTab.get().getUserData()) {
+                    case SPOTIFLOW -> regions + "Mark spots with points or area centroids.";
+                    case STARDIST_QP -> regions + "Train from instance annotations and save an ONNX model for QuPath.";
+                    default -> regions + "Draw one area annotation per instance.";
+                };
             }, selectedTab));
             instruction.setWrapText(true);
             instruction.getStyleClass().add("note");

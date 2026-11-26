@@ -8,6 +8,8 @@ import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
+import javafx.scene.control.MenuButton;
+import javafx.scene.control.MenuItem;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextField;
 import javafx.scene.control.TitledPane;
@@ -41,10 +43,14 @@ final class ModelForm {
     private final TextField model = new TextField();
     private final ComboBox<Channels.Choice> primary = new ComboBox<>();
     private final ComboBox<Channels.Choice> secondary = new ComboBox<>();
+    private final ComboBox<Channels.Choice> third = new ComboBox<>();
     private final TextField downsample = new TextField("1");
     private final ComboBox<Integer> rectangleSize = new ComboBox<>();
     private final TextField diameter = new TextField("0");
     private final TextField threshold = new TextField();
+    private final TextField nms = new TextField();
+    private final TextField pixelSize = new TextField("0");
+    private final ComboBox<String> target = new ComboBox<>();
     private final TextField flow = new TextField("0.4");
     private final TextField distance = new TextField("1");
     private final TextField radius = new TextField("2");
@@ -67,29 +73,43 @@ final class ModelForm {
         this.engine = engine;
         this.training = training;
         this.window = window;
-        if (engine != Engine.STARDIST)
+        if (engine.usesPython(training))
             python.textProperty().bindBidirectional(pythonPath);
-        model.setText(training ? "" : engine.defaultModel());
-        model.setPromptText(training ? "Train from scratch" : switch (engine) {
+        model.setText(engine.defaultModel(training));
+        model.setPromptText(training && engine != Engine.CELLPOSE_SAM ? "Train from scratch" : switch (engine) {
             case CELLPOSE -> "cyto3, nuclei or model file";
+            case CELLPOSE_SAM -> "Choose a pretrained Cellpose 4 checkpoint";
             case SPOTIFLOW -> "general or model folder";
-            case STARDIST -> "Choose a StarDist .pb or .onnx file";
+            case STARDIST -> "StarDist PyTorch model folder";
+            case STARDIST_QP -> "Choose a StarDist .pb or .onnx file";
+            case INSTANSEG -> "InstanSeg model folder or TorchScript file";
         });
+        if (training && engine == Engine.INSTANSEG)
+            model.setTooltip(new Tooltip("Optional weights.pt from a previous CI DL InstanSeg training run."));
         var modelPath = new Tooltip();
         modelPath.textProperty().bind(model.textProperty());
-        model.setTooltip(modelPath);
-        expansion.disableProperty().bind(annotations.selectedProperty());
+        if (model.getTooltip() == null)
+            model.setTooltip(modelPath);
         device.getItems().setAll("Auto", "CPU", "CUDA");
         device.getSelectionModel().selectFirst();
         secondary.getItems().add(Channels.NONE);
         secondary.setValue(Channels.NONE);
-        threshold.setText(engine == Engine.STARDIST ? "0.5" : engine == Engine.CELLPOSE ? "0" : "");
+        threshold.setText(engine == Engine.STARDIST_QP ? "0.5" : engine.isCellpose() ? "0" : "");
+        nms.setPromptText("Model default");
+        target.getItems().setAll("Nuclei", "Cells");
+        target.getSelectionModel().selectFirst();
+        expansion.disableProperty().bind(annotations.selectedProperty().or(target.valueProperty().isEqualTo("Cells")));
         threshold.setPromptText("Model default");
         excludeBorder.setSelected(engine != Engine.SPOTIFLOW);
         replaceSpots.setSelected(true);
-        rate.setText(engine == Engine.CELLPOSE ? "0.005" : "0.0003");
-        batch.setText(engine == Engine.CELLPOSE ? "8" : "4");
-        crop.setText(engine == Engine.CELLPOSE ? "224" : "256");
+        rate.setText(switch (engine) {
+            case CELLPOSE -> "0.005";
+            case CELLPOSE_SAM -> "0.00001";
+            case STARDIST, STARDIST_QP -> "0.0001";
+            default -> "0.0003";
+        });
+        batch.setText(engine == Engine.CELLPOSE ? "8" : engine == Engine.CELLPOSE_SAM ? "1" : "4");
+        crop.setText(engine == Engine.CELLPOSE ? "224" : engine == Engine.CELLPOSE_SAM ? "0" : "256");
         name.setText(engine.id + "_custom");
         if (training) {
             var preference = PathPrefs.createPersistentPreference("ci.dl." + engine.id + ".rectangle.size",
@@ -117,8 +137,10 @@ final class ModelForm {
         if (training)
             add(input, "New model name", name);
         add(input, "Image channel", primary);
-        if (engine == Engine.CELLPOSE)
+        if (engine.usesSecondaryChannel())
             add(input, "Secondary channel", secondary);
+        if (engine.usesThirdChannel())
+            add(input, "Third channel", third);
         add(input, "Downsample", downsample);
         if (training) {
             var modelSize = new Label();
@@ -135,19 +157,23 @@ final class ModelForm {
             add(parameters, "Epochs", epochs);
             add(parameters, "Learning rate", rate);
             add(parameters, "Batch size", batch);
-            if (engine == Engine.CELLPOSE) {
+            if (engine == Engine.CELLPOSE)
                 add(parameters, "Mean diameter (from scratch, 0 = default)", diameter);
+            if (engine != Engine.SPOTIFLOW)
                 add(parameters, "Minimum instances per training patch", masks);
-            }
             if (engine == Engine.SPOTIFLOW)
                 add(parameters, "Spot sigma (pixels, from scratch)", sigma);
         } else {
-            if (engine == Engine.CELLPOSE) {
+            if (engine.isCellpose()) {
                 add(parameters, "Diameter (model pixels, 0 = auto)", diameter);
                 add(parameters, "Cell probability threshold", threshold);
                 add(parameters, "Flow threshold", flow);
+            } else if (engine == Engine.INSTANSEG) {
+                add(parameters, "Segmentation target", target);
             } else {
                 add(parameters, "Probability threshold", threshold);
+                if (engine == Engine.STARDIST)
+                    add(parameters, "Overlap threshold (NMS)", nms);
             }
             if (engine == Engine.SPOTIFLOW) {
                 add(parameters, "Minimum peak distance (model pixels)", distance);
@@ -165,13 +191,21 @@ final class ModelForm {
         }
 
         var advanced = grid();
-        if (training)
-            add(advanced, "Training crop size (model pixels)", crop);
+        if (training) {
+            add(advanced, engine == Engine.CELLPOSE_SAM ? "Training crop (0 = backbone default)" : "Training crop size (model pixels)", crop);
+            if (engine == Engine.CELLPOSE_SAM) {
+                var information = new Label("SAM uses 256 px. DINO defaults to 384 px and supports other multiples of 16.");
+                information.setWrapText(true);
+                add(advanced, null, information);
+            }
+        }
+        if (engine == Engine.INSTANSEG)
+            add(advanced, "Pixel size override (µm/image px, 0 = calibrated)", pixelSize);
         if (engine != Engine.SPOTIFLOW) {
             add(advanced, "Mean filter radius (model pixels)", mean);
             add(advanced, "Gaussian blur sigma (model pixels)", gaussian);
         }
-        if (engine != Engine.STARDIST) {
+        if (engine.usesPython(training)) {
             add(advanced, "Python executable", pythonPicker());
             add(advanced, "Compute device", device);
         }
@@ -212,12 +246,12 @@ final class ModelForm {
     }
 
     private HBox modelPicker() {
-        var browse = new Button(engine == Engine.SPOTIFLOW ? "Folder…" : "Browse…");
+        var browse = new Button(engine.browsesFolders(training) ? "Folder…" : "Browse…");
         browse.setOnAction(event -> {
-            if (engine == Engine.SPOTIFLOW) {
+            if (engine.browsesFolders(training)) {
                 var chooser = new DirectoryChooser();
-                chooser.setTitle("Choose Spotiflow model folder");
-                var initial = initialDirectory(model, engine.modelEnvironment);
+                chooser.setTitle("Choose " + engine.title + " model folder");
+                var initial = initialDirectory(model, engine.modelDirectory(training));
                 if (initial != null)
                     chooser.setInitialDirectory(initial.toFile());
                 var selected = chooser.showDialog(window);
@@ -225,12 +259,22 @@ final class ModelForm {
                     model.setText(selected.getAbsolutePath());
             } else {
                 pickFile(model, "Choose " + engine.title + " model",
-                        engine.modelEnvironment);
+                        engine.modelDirectory(training));
             }
         });
         var row = new HBox(6, model, browse);
         HBox.setHgrow(model, Priority.ALWAYS);
-        if (training) {
+        var presets = engine.modelPresets(training);
+        if (!presets.isEmpty()) {
+            var menu = new MenuButton("Presets");
+            for (var preset : presets) {
+                var item = new MenuItem(preset);
+                item.setOnAction(event -> model.setText(engine.modelChoice(preset, training)));
+                menu.getItems().add(item);
+            }
+            row.getChildren().add(menu);
+        }
+        if (training && engine != Engine.CELLPOSE_SAM) {
             var clear = new Button("Clear");
             clear.setOnAction(event -> model.clear());
             row.getChildren().add(clear);
@@ -238,20 +282,20 @@ final class ModelForm {
         return row;
     }
 
-    private void pickFile(TextField field, String title, String modelEnvironment) {
+    private void pickFile(TextField field, String title, Path modelDirectory) {
         var chooser = new FileChooser();
         chooser.setTitle(title);
-        var initial = initialDirectory(field, modelEnvironment);
+        var initial = initialDirectory(field, modelDirectory);
         if (initial != null)
             chooser.setInitialDirectory(initial.toFile());
-        if (field == model && engine == Engine.STARDIST)
+        if (field == model && engine == Engine.STARDIST_QP && !training)
             chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("StarDist model", "*.pb", "*.onnx"));
         var selected = chooser.showOpenDialog(window);
         if (selected != null)
             field.setText(selected.getAbsolutePath());
     }
 
-    private static Path initialDirectory(TextField field, String env) {
+    private static Path initialDirectory(TextField field, Path directory) {
         var text = field.getText().strip();
         try {
             if (!text.isEmpty()) {
@@ -261,9 +305,8 @@ final class ModelForm {
                 if (path.isAbsolute() && Files.isDirectory(path.getParent()))
                     return path.getParent();
             }
-            var dir = env == null ? null : System.getenv(env);
-            if (dir != null && Files.isDirectory(Path.of(dir)))
-                return Path.of(dir).toAbsolutePath();
+            if (directory != null && Files.isDirectory(directory))
+                return directory.toAbsolutePath();
         } catch (IllegalArgumentException ignored) {
             // Let the chooser open in its default location.
         }
@@ -271,9 +314,7 @@ final class ModelForm {
     }
 
     static StringProperty pythonPreference(Engine engine) {
-        if (engine == Engine.STARDIST)
-            return null;
-        String value = System.getenv("CI_DL_" + engine.id.toUpperCase(Locale.ROOT) + "_PYTHON");
+        String value = System.getenv("CI_DL_" + engine.id.toUpperCase(Locale.ROOT).replace('-', '_') + "_PYTHON");
         if (value == null) {
             String base = System.getenv("QUPATH_BASE");
             if (base != null) {
@@ -288,6 +329,7 @@ final class ModelForm {
     void updateChannels(List<Channels.Choice> choices) {
         var oldPrimary = primary.getValue();
         var oldSecondary = secondary.getValue();
+        var oldThird = third.getValue();
         primary.getItems().setAll(choices);
         primary.setValue(oldPrimary != null && choices.contains(oldPrimary) ? oldPrimary : Channels.initial(choices));
         var second = new ArrayList<Channels.Choice>();
@@ -295,6 +337,8 @@ final class ModelForm {
         second.addAll(choices);
         secondary.getItems().setAll(second);
         secondary.setValue(oldSecondary != null && second.contains(oldSecondary) ? oldSecondary : Channels.NONE);
+        third.getItems().setAll(second);
+        third.setValue(oldThird != null && second.contains(oldThird) ? oldThird : Channels.NONE);
     }
 
     private static GridPane grid() {
@@ -329,19 +373,22 @@ final class ModelForm {
     }
 
     Prediction.Settings prediction() {
-        boolean cell = engine == Engine.CELLPOSE;
+        boolean cell = engine.isCellpose();
         boolean spot = engine == Engine.SPOTIFLOW;
-        Double prob = spot && threshold.getText().isBlank() ? null
+        boolean cells = engine == Engine.INSTANSEG && "Cells".equals(target.getValue());
+        Double prob = threshold.getText().isBlank() && engine != Engine.STARDIST_QP ? null
                 : decimal(threshold, "Threshold", cell ? -20 : 0, cell ? 20 : 1);
         return new Prediction.Settings(engine, executable(), resolvedModel(), device(), channels(),
                 decimal(downsample, "Downsample", 1, 128), cell ? decimal(diameter, "Diameter", 0, 10000) : 0,
                 prob, cell ? decimal(flow, "Flow threshold", 0, 10) : 0,
                 spot ? integer(distance, "Minimum peak distance", 1, 1024) : 1,
                 spot ? decimal(radius, "Spot marker radius", 0.25, 100) : 0,
-                spot || annotations.isSelected() ? 0 : decimal(expansion, "Cell expansion", 0, 1000),
+                spot || cells || annotations.isSelected() ? 0 : decimal(expansion, "Cell expansion", 0, 1000),
                 spot ? 0 : integer(mean, "Mean filter radius", 0, 99),
                 spot ? 0 : decimal(gaussian, "Gaussian blur", 0, 99),
-                annotations.isSelected(), excludeBorder.isSelected(), measurements.isSelected(), replaceSpots.isSelected());
+                annotations.isSelected(), excludeBorder.isSelected(), measurements.isSelected(), replaceSpots.isSelected(),
+                engine == Engine.STARDIST && !nms.getText().isBlank() ? decimal(nms, "Overlap threshold", 0, 1) : null,
+                cells, pixelSize());
     }
 
     Training.Settings training(Path projectFolder) {
@@ -354,14 +401,24 @@ final class ModelForm {
                 decimal(downsample, "Downsample", 1, 128), projectFolder.resolve("models").resolve(modelName),
                 integer(epochs, "Epochs", 1, 5000), decimal(rate, "Learning rate", 1e-9, 1),
                 integer(batch, "Batch size", 1, 256), cell ? decimal(diameter, "Diameter", 0, 10000) : 0,
-                cell ? integer(masks, "Minimum instances", 1, 10000) : 0,
-                integer(crop, "Training crop size", 16, 1024), cell ? 0 : decimal(sigma, "Spot sigma", 0.1, 32),
-                cell ? integer(mean, "Mean filter radius", 0, 99) : 0,
-                cell ? decimal(gaussian, "Gaussian blur", 0, 99) : 0);
+                engine != Engine.SPOTIFLOW ? integer(masks, "Minimum instances", 1, 10000) : 0,
+                trainingCrop(), engine == Engine.SPOTIFLOW ? decimal(sigma, "Spot sigma", 0.1, 32) : 0,
+                engine != Engine.SPOTIFLOW ? integer(mean, "Mean filter radius", 0, 99) : 0,
+                engine != Engine.SPOTIFLOW ? decimal(gaussian, "Gaussian blur", 0, 99) : 0, pixelSize());
+    }
+
+    private int trainingCrop() {
+        if (engine == Engine.CELLPOSE_SAM && crop.getText().strip().equals("0"))
+            return 0;
+        return integer(crop, "Training crop size", 16, 1024);
+    }
+
+    private double pixelSize() {
+        return engine == Engine.INSTANSEG ? decimal(pixelSize, "Pixel size", 0, 1000) : 0;
     }
 
     private String executable() {
-        if (engine == Engine.STARDIST)
+        if (!engine.usesPython(training))
             return "";
         var value = python.getText().strip();
         if (value.isEmpty() || value.equals("python"))
@@ -375,13 +432,15 @@ final class ModelForm {
     private String resolvedModel() {
         var value = model.getText().strip();
         if (value.isEmpty()) {
-            if (training)
+            if (training && engine != Engine.CELLPOSE_SAM)
                 return "";
             throw new IllegalArgumentException("Choose a " + engine.title + " model.");
         }
+        if (engine.modelPresets(training).contains(value))
+            value = engine.modelChoice(value, training);
         var path = Path.of(value);
-        if (engine == Engine.STARDIST && !Files.isRegularFile(path))
-            throw new IllegalArgumentException("Choose a local StarDist model file.");
+        if (engine == Engine.STARDIST_QP && !training && !Files.isRegularFile(path))
+            throw new IllegalArgumentException("Choose a local StarDist-QP model file.");
         if (Files.exists(path))
             return path.toAbsolutePath().normalize().toString();
         if (path.isAbsolute() || path.getNameCount() > 1 || value.contains("\\") || value.contains("/"))
@@ -396,7 +455,8 @@ final class ModelForm {
     private Channels channels() {
         if (primary.getValue() == null)
             throw new IllegalArgumentException("Select an image channel.");
-        return new Channels(primary.getValue(), engine == Engine.CELLPOSE ? secondary.getValue() : null);
+        return new Channels(primary.getValue(), engine.usesSecondaryChannel() ? secondary.getValue() : null,
+                engine.usesThirdChannel() ? third.getValue() : null);
     }
 
     private static double decimal(TextField field, String title, double min, double max) {

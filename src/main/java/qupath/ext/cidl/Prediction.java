@@ -32,14 +32,15 @@ final class Prediction {
     record Settings(Engine engine, String python, String model, String device, Channels channels,
                     double downsample, double diameter, Double threshold, double flowThreshold,
                     int minDistance, double spotRadius, double expansion, int mean, double gaussian,
-                    boolean annotations, boolean excludeBorder, boolean measurements, boolean replaceSpots) {}
+                    boolean annotations, boolean excludeBorder, boolean measurements, boolean replaceSpots,
+                    Double nms, boolean cells, double pixelSize) {}
     private record Export(PatchIO.Patch patch, RegionRequest request, Path output) {}
 
     static void run(Job job, ImageData<BufferedImage> image, List<Region> regions, Settings s) throws Exception {
         var server = image.getServer();
         var channels = s.channels().resolve(server);
         List<List<PathObject>> results;
-        if (s.engine() == Engine.STARDIST) {
+        if (s.engine() == Engine.STARDIST_QP) {
             job.log("Running StarDist on " + regions.size() + " selected region(s).");
             results = starDist(job, image, regions, s, channels.getFirst());
         } else {
@@ -109,6 +110,9 @@ final class Prediction {
             config.put("exclude_border", s.excludeBorder());
             config.put("mean", s.mean());
             config.put("gaussian", s.gaussian());
+            config.put("nms", s.nms());
+            config.put("cells", s.cells());
+            config.put("pixel_size", s.pixelSize() * s.downsample());
             config.put("patches", exports.stream().map(e -> e.patch().target(e.output(), "prediction")).toList());
             job.python(s.python(), work, config);
             var results = new ArrayList<List<PathObject>>();
@@ -116,8 +120,8 @@ final class Prediction {
                 job.check();
                 var export = exports.get(i);
                 var roi = regions.get(i).roi();
-                results.add(s.engine() == Engine.CELLPOSE ? readMasks(job, export, roi, image, s)
-                        : readSpots(export.output(), export.request(), roi, s.spotRadius()));
+                results.add(s.engine() == Engine.SPOTIFLOW ? readSpots(export.output(), export.request(), roi, s.spotRadius())
+                        : readMasks(job, export, roi, image, s));
             }
             return results;
         } finally {
@@ -214,6 +218,8 @@ final class Prediction {
         invoke(b.getMethod("channels", int[].class), builder, new int[]{channel});
         invoke(b.getMethod("normalizePercentiles", double.class, double.class), builder, 1.0, 99.0);
         invoke(b.getMethod("threshold", double.class), builder, s.threshold());
+        if (s.model().toLowerCase(java.util.Locale.ROOT).endsWith(".onnx"))
+            invoke(b.getMethod("layout", String.class), builder, "BCHW");
         invoke(b.getMethod("pixelSize", double.class), builder, size * s.downsample());
         invoke(b.getMethod("includeProbability", boolean.class), builder, true);
         invoke(b.getMethod("classify", PathClass.class), builder, segmentationClass(s));
@@ -263,7 +269,7 @@ final class Prediction {
     }
 
     private static PathClass segmentationClass(Settings s) {
-        return PathClass.fromString(s.expansion() > 0 && !s.annotations() ? "Cells" : "Nuclei");
+        return PathClass.fromString((s.expansion() > 0 && !s.annotations()) || s.cells() ? "Cells" : "Nuclei");
     }
 
     private static boolean touchesImage(ROI roi, ImageData<BufferedImage> data) {

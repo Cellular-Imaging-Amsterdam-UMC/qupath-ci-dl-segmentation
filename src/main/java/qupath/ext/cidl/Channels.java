@@ -5,7 +5,10 @@ import qupath.lib.images.servers.ImageServer;
 import java.util.List;
 import java.util.Locale;
 
-record Channels(Choice primary, Choice secondary) {
+record Channels(Choice primary, Choice secondary, Choice third) {
+    Channels(Choice primary, Choice secondary) {
+        this(primary, secondary, null);
+    }
     static final Choice NONE = new Choice(-1, "None");
 
     record Choice(int index, String name) {
@@ -32,13 +35,17 @@ record Channels(Choice primary, Choice secondary) {
 
     List<Integer> resolve(ImageServer<?> server) {
         var choices = choices(server);
-        int first = resolve(choices, primary);
-        if (secondary == null || secondary.index() < 0)
-            return List.of(first);
-        int second = resolve(choices, secondary);
-        if (first == second)
-            throw new IllegalArgumentException("Choose different primary and secondary channels.");
-        return List.of(first, second);
+        var channels = new java.util.ArrayList<Integer>();
+        channels.add(resolve(choices, primary));
+        for (var optional : new Choice[]{secondary, third}) {
+            if (optional == null || optional.index() < 0)
+                continue;
+            int index = resolve(choices, optional);
+            if (channels.contains(index))
+                throw new IllegalArgumentException("Choose a different image channel for each input.");
+            channels.add(index);
+        }
+        return List.copyOf(channels);
     }
 
     private static int resolve(List<Choice> choices, Choice choice) {

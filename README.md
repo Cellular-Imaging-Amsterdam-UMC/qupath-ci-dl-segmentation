@@ -4,24 +4,26 @@ A Java extension with two English-language workspaces under **Extensions → CI 
 
 | Workspace | Tabs |
 | --- | --- |
-| Prediction | Cellpose 3.x, StarDist, Spotiflow |
-| Training | Cellpose 3.x, Spotiflow |
+| Prediction | Cellpose 3.x, Cellpose-SAM 4+, StarDist, StarDist-QP, InstanSeg, Spotiflow |
+| Training | Cellpose 3.x, Cellpose-SAM 4+, StarDist, StarDist-QP, InstanSeg, Spotiflow |
 
 ## Install
 
 1. Open QuPath 0.7 and install the extension JAR from [Releases](https://github.com/Cellular-Imaging-Amsterdam-UMC/qupath-ci-dl-segmentation/releases). Restart QuPath.
-2. For Cellpose and Spotiflow, prepare Python environments and select their Python executables in **Advanced settings** on the corresponding tabs. The executable is remembered for each engine across both windows. If left blank, the extension uses `python` from QuPath's environment.
-3. For StarDist, install the [QuPath StarDist extension](https://github.com/qupath/qupath-extension-stardist) from QuPath's Extension Manager and choose a compatible local model, such as [`dsb2018_heavy_augment.pb`](https://github.com/qupath/models/tree/main/stardist).
+2. For the Python backends, prepare an environment and select their Python executables in **Advanced settings** on the corresponding tabs. The executable is remembered for each engine across both windows. If left blank, the extension uses `python` from QuPath's environment.
+3. For StarDist-QP prediction, install the [QuPath StarDist extension](https://github.com/qupath/qupath-extension-stardist) from QuPath's Extension Manager and choose a compatible local model, such as [`dsb2018_heavy_augment.pb`](https://github.com/qupath/models/tree/main/stardist).
 
 The JAR includes the Python backend script. QuPath handles region export, annotation labels, and import of predictions directly. Cellpose and Spotiflow run through their Python packages, with no BIOP extension required.
 
 A starting point for a Python 3.11 or 3.12 environment with PyTorch is:
 
 ```sh
-python -m pip install "cellpose>=3,<4" "spotiflow>=0.6.5,<0.7"
+python -m pip install "cellpose==4.2.1.1" "spotiflow==0.6.5" "cistardist-pytorch==0.4.1" "stardist==0.9.2" onnx "instanseg-torch==0.1.1" seaborn
+python -m pip install "cellpose3_legacy @ git+https://github.com/Cellular-Imaging-Amsterdam-UMC/cellpose3_legacy.git@5789ad61c99a9e2fc8ea0a404f92d6ea1a6a9cd1"
+python -m pip install "dinov3 @ git+https://github.com/facebookresearch/dinov3.git@6876159a11b4df116f30f667f8c9888617df0751"
 ```
 
-The workflows were tested with Cellpose 3.1.1.3 and Spotiflow 0.6.5. Choose **Auto**, **CPU**, or **CUDA** in **Advanced settings**. CUDA requires a compatible PyTorch installation. Each engine can use a separate environment.
+Cellpose 3 and 4 can share this environment through cellpose3_legacy. The Cellpose 3 tab also accepts a separate environment with Cellpose 3.x installed directly. Choose **Auto**, **CPU**, or **CUDA** in **Advanced settings**. CUDA requires a compatible PyTorch installation. Each engine can use a separate environment.
 
 ### Portable installations
 
@@ -35,7 +37,7 @@ The extension recognizes `CELLPOSE_LOCAL_MODELS_PATH`, `STARDIST_LOCAL_MODELS_PA
 
 Cellpose and StarDist produce nucleus detections, expanded cells, or annotations depending on the selected settings. Spotiflow creates `Foci` detections with a probability measurement and adds `Foci: Count` to each parent. Cellpose and StarDist append results on rerun. Spotiflow can replace its own previous detections under the same parents.
 
-Downsample applies to the XY resolution in the selected plane. A downsample of 2 uses half the native width and height. Model thresholds, peak distances, and diameters use the model input resolution. Cell expansion and spot-marker radius use the original image pixel coordinates. Cellpose and Spotiflow process each selected region's bounding crop and accept up to 16.8 megapixels per crop at the chosen downsample. Use smaller annotations or increase downsample for larger crops. StarDist uses the QuPath engine's tile processing.
+Downsample applies to the XY resolution in the selected plane. A downsample of 2 uses half the native width and height. Model thresholds, peak distances, and diameters use the model input resolution. Cell expansion and spot-marker radius use the original image pixel coordinates. Cellpose and Spotiflow process each selected region's bounding crop and accept up to 16.8 megapixels per crop at the chosen downsample. Use smaller annotations or increase downsample for larger crops. StarDist-QP uses the QuPath engine's tile processing.
 
 ## Training
 
@@ -50,6 +52,13 @@ The extension saves successful models under `models/` in the project folder. Cel
 The log streams Python output. Spotiflow reports training and validation loss each epoch. Cellpose reports both on its native validation schedule during training and fills in per-epoch training loss at completion when the installed Cellpose version returns it. The chart starts with a zero baseline, then gradually fits the recent range with padding. Enable **Fit all epochs** to bring earlier values back into view.
 
 Use the chevron in the Training header to collapse or expand the workspace. The training toolbar, run status, and Stop button stay visible in the compact view.
+
+### New model formats and training options
+
+- **Cellpose-SAM 4+** fine-tunes a pretrained checkpoint. Choose `cpsam_v2` or `cpsam` for SAM-ViT-L, or `cpdino` or `cpdino-vitb` for DINOv3. Compatible custom Cellpose 4 weights can also be used. SAM runs at 256 × 256 model pixels. DINO defaults to 384 × 384 and supports other compatible crop sizes. Training starts with a learning rate of 1e-5 and batch size one. [Cellpose model documentation](https://cellpose.readthedocs.io/en/latest/models.html)
+- **StarDist** trains or fine-tunes a single-channel PyTorch model. **StarDist-QP** uses the same PyTorch workflow and additionally saves `model.onnx` for the QuPath Prediction tab. Use a local StarDist folder with weights, configuration and thresholds for PyTorch prediction.
+- **InstanSeg** predicts nuclei or cells with a local TorchScript model that provides the chosen output. Training produces a single instance target using one to three selected channels. Select `weights.pt` from a previous CI DL InstanSeg run to fine-tune it. Use `instanseg.pt` or its containing model folder for prediction. Enter a pixel size override in Advanced settings when needed.
+- Portable launchers can set `CELLPOSE3_LEGACY_LOCAL_MODELS_PATH`, `CELLPOSE_LOCAL_MODELS_PATH` for Cellpose 4, `CI_DL_STARDIST_MODELS` for PyTorch, `STARDIST_LOCAL_MODELS_PATH` for QuPath, and `CI_DL_INSTANSEG_MODELS` to expose local presets.
 
 ## Build
 

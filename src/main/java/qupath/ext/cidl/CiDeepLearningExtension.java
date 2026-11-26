@@ -17,8 +17,8 @@ public final class CiDeepLearningExtension implements QuPathExtension {
             return;
         installed = true;
         var pythonPaths = new java.util.EnumMap<Engine, javafx.beans.property.StringProperty>(Engine.class);
-        pythonPaths.put(Engine.CELLPOSE, ModelForm.pythonPreference(Engine.CELLPOSE));
-        pythonPaths.put(Engine.SPOTIFLOW, ModelForm.pythonPreference(Engine.SPOTIFLOW));
+        for (var engine : Engine.values())
+            pythonPaths.put(engine, ModelForm.pythonPreference(engine));
         var menu = new Menu("CI Deep Learning Segmentation");
         menu.setGraphic(WindowIcon.view(16));
         var predict = new MenuItem("Prediction…");
@@ -44,7 +44,7 @@ public final class CiDeepLearningExtension implements QuPathExtension {
 
     @Override
     public String getDescription() {
-        return "Predict with Cellpose, StarDist or Spotiflow and train Cellpose and Spotiflow models.";
+        return "Predict and train Cellpose, StarDist, InstanSeg and Spotiflow models.";
     }
 
     @Override

@@ -18,9 +18,13 @@ import java.util.function.IntToDoubleFunction;
 final class PatchIO {
     private static final long MAX_PIXELS = 16_777_216L;
 
-    record Patch(String image, String target, String split, int width, int height, int channels) {
+    record Patch(String image, String target, String split, int width, int height, int channels, Double pixelSize) {
+        Patch(String image, String target, String split, int width, int height, int channels) {
+            this(image, target, split, width, height, channels, null);
+        }
+
         Patch target(Path path, String split) {
-            return new Patch(image, path.toString(), split, width, height, channels);
+            return new Patch(image, path.toString(), split, width, height, channels, pixelSize);
         }
     }
 
@@ -49,7 +53,10 @@ final class PatchIO {
             int band = index % channels.size();
             return bands[band][index / channels.size()];
         });
-        return new Patch(file.toString(), null, null, width, height, channels.size());
+        var calibration = server.getPixelCalibration();
+        Double pixelSize = calibration.hasPixelSizeMicrons()
+                ? calibration.getAveragedPixelSizeMicrons() * request.getDownsample() : null;
+        return new Patch(file.toString(), null, null, width, height, channels.size(), pixelSize);
     }
 
     static void writeMask(Job job, Path path, int width, int height, int[] labels) throws IOException {
