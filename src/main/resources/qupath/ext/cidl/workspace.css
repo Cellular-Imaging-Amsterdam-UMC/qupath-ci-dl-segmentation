@@ -1,0 +1,102 @@
+/* SPDX-FileCopyrightText: 2026 CI Pixel Classifier contributors */
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+
+.ci-dl {
+    -ci-surface: derive(-fx-background, 4%);
+    -ci-outline: derive(-fx-background, -12%);
+    -ci-subtle: derive(-fx-background, -4%);
+    -fx-font-size: 13px;
+    -fx-background-color: -fx-background;
+}
+
+.ci-dl .workspace-header {
+    -fx-padding: 9 12 8 12;
+    -fx-spacing: 10;
+    -fx-background-color: -ci-surface;
+    -fx-border-color: transparent transparent -ci-outline transparent;
+}
+
+.ci-dl .workspace-title {
+    -fx-font-size: 20px;
+    -fx-font-weight: bold;
+}
+
+.ci-dl .workspace-scroll,
+.ci-dl .workspace-scroll > .viewport {
+    -fx-background-color: -fx-background;
+    -fx-background-insets: 0;
+    -fx-padding: 0;
+}
+
+.ci-dl .workspace-body {
+    -fx-padding: 8 10 9 10;
+}
+
+.ci-dl .card {
+    -fx-padding: 8 10 9 10;
+    -fx-background-color: -ci-surface;
+    -fx-background-radius: 9;
+    -fx-border-color: -ci-outline;
+    -fx-border-radius: 9;
+}
+
+.ci-dl .card-heading {
+    -fx-font-size: 15px;
+    -fx-font-weight: bold;
+    -fx-padding: 0 0 2 0;
+}
+
+.ci-dl .field-label {
+    -fx-font-size: 12px;
+    -fx-font-weight: bold;
+}
+
+.ci-dl .note {
+    -fx-font-size: 12px;
+}
+
+.ci-dl .workspace-footer {
+    -fx-padding: 7 11;
+    -fx-spacing: 12;
+    -fx-background-color: -ci-surface;
+    -fx-border-color: -ci-outline transparent transparent transparent;
+}
+
+.ci-dl .primary {
+    -fx-font-weight: bold;
+    -fx-padding: 6 12;
+    -fx-background-color: #176d64;
+    -fx-background-radius: 6;
+    -fx-text-fill: white;
+}
+
+.ci-dl .primary:hover {
+    -fx-background-color: #12584f;
+}
+
+.ci-dl .primary:focused {
+    -fx-border-color: -fx-focus-color;
+    -fx-border-radius: 6;
+}
+
+
+.ci-dl .runtime-log {
+    -fx-font-family: "Monospaced";
+    -fx-font-size: 11px;
+}
+.ci-dl .loss-chart {
+    -fx-padding: 0;
+}
+.ci-dl .default-color0.chart-series-line { -fx-stroke: #269486; }
+.ci-dl .default-color1.chart-series-line { -fx-stroke: #c97b28; }
+.ci-dl .default-color0.chart-line-symbol { -fx-background-color: #269486, -fx-background; }
+.ci-dl .default-color1.chart-line-symbol { -fx-background-color: #c97b28, -fx-background; }
+.ci-dl .chart-line-symbol { -fx-padding: 3px; }
+
+.ci-dl .window-toggle-glyph {
+    -fx-fill: transparent;
+    -fx-stroke: -fx-text-base-color;
+    -fx-stroke-width: 1.6;
+    -fx-stroke-line-cap: round;
+    -fx-stroke-line-join: round;
+}

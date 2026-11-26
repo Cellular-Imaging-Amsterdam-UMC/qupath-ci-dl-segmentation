@@ -1,0 +1,54 @@
+package qupath.ext.cidl;
+
+import javafx.scene.control.Menu;
+import javafx.scene.control.MenuItem;
+import qupath.lib.common.Version;
+import qupath.lib.gui.QuPathGUI;
+import qupath.lib.gui.extensions.QuPathExtension;
+
+public final class CiDeepLearningExtension implements QuPathExtension {
+    private Workspace prediction;
+    private Workspace training;
+    private boolean installed;
+
+    @Override
+    public void installExtension(QuPathGUI qupath) {
+        if (installed)
+            return;
+        installed = true;
+        var pythonPaths = new java.util.EnumMap<Engine, javafx.beans.property.StringProperty>(Engine.class);
+        pythonPaths.put(Engine.CELLPOSE, ModelForm.pythonPreference(Engine.CELLPOSE));
+        pythonPaths.put(Engine.SPOTIFLOW, ModelForm.pythonPreference(Engine.SPOTIFLOW));
+        var menu = new Menu("CI Deep Learning Segmentation");
+        menu.setGraphic(WindowIcon.view(16));
+        var predict = new MenuItem("Prediction…");
+        var train = new MenuItem("Training…");
+        predict.setOnAction(event -> {
+            if (prediction == null)
+                prediction = new Workspace(qupath, false, pythonPaths);
+            prediction.show();
+        });
+        train.setOnAction(event -> {
+            if (training == null)
+                training = new Workspace(qupath, true, pythonPaths);
+            training.show();
+        });
+        menu.getItems().addAll(predict, train);
+        qupath.getMenu("Extensions", true).getItems().add(menu);
+    }
+
+    @Override
+    public String getName() {
+        return "CI Deep Learning Segmentation";
+    }
+
+    @Override
+    public String getDescription() {
+        return "Predict with Cellpose, StarDist or Spotiflow and train Cellpose and Spotiflow models.";
+    }
+
+    @Override
+    public Version getQuPathVersion() {
+        return Version.parse("0.7.0");
+    }
+}

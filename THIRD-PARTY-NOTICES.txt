@@ -1,0 +1,6 @@
+The JavaFX stylesheet, window collapse behavior, and Windows title-bar icon support are adapted from CI Pixel Classifier.
+Copyright 2026 CI Pixel Classifier contributors, GPL-3.0-or-later.
+https://github.com/Cellular-Imaging-Amsterdam-UMC/qupath-ci-pixel-classifier
+
+The Gradle Wrapper is redistributed under the Apache License 2.0.
+See gradle/wrapper/LICENSE in the source repository.
