@@ -15,7 +15,8 @@ def report_loss(epoch, train=None, validation=None):
     def value(number):
         return "-" if number is None or not math.isfinite(float(number)) else f"{float(number):.9g}"
 
-    print(f"CI_LOSS\t{epoch}\t{value(train)}\t{value(validation)}", flush=True)
+    # Lightning may leave a progress bar line open on stdout.
+    print(f"\nCI_LOSS\t{epoch}\t{value(train)}\t{value(validation)}", flush=True)
 
 
 def load_image(patch, config):
@@ -188,6 +189,8 @@ def train_spotiflow(config, device):
             metrics = trainer.callback_metrics
             report_loss(trainer.current_epoch + 1, metrics.get("train_loss"), metrics.get("val_loss"))
 
+    # Spotiflow's checkpoint callback expects a Lightning logger for its metrics.
+    metrics_logger = api.pl.loggers.CSVLogger(save_dir=str(Path(config["output"]).parent), name="metrics")
     model.fit(
         train_images, train_points, val_images, val_points, save_dir=config["output"],
         train_config={
@@ -195,7 +198,7 @@ def train_spotiflow(config, device):
             "batch_size": min(config["batch_size"], len(train_images)), "crop_size": config["crop"],
         },
         device="gpu" if device == "cuda" else device, callbacks=[LossCallback()],
-        logger=False, num_workers=0, default_root_dir=config["output"],
+        logger=metrics_logger, num_workers=0, default_root_dir=config["output"],
     )
 
 

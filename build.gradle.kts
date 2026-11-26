@@ -41,6 +41,10 @@ tasks.test {
     jvmArgs("--enable-native-access=ALL-UNNAMED")
 }
 
+tasks.processResources {
+    exclude("**/__pycache__/**", "**/*.pyc")
+}
+
 tasks.jar {
     from(listOf("LICENSE", "THIRD-PARTY-NOTICES.txt")) { into("META-INF") }
     manifest.attributes(
