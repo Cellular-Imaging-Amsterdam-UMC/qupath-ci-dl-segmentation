@@ -6,9 +6,11 @@ import javafx.beans.value.ChangeListener;
 import javafx.collections.ListChangeListener;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
+import javafx.geometry.VPos;
 import javafx.scene.Node;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
+import javafx.scene.control.ButtonBase;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.Dialog;
 import javafx.scene.control.Label;
@@ -53,6 +55,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 final class Workspace {
+    private static final double PREDICTION_MIN_WIDTH = 750;
     private static final double TRAINING_MIN_HEIGHT = 630;
     private static final org.slf4j.Logger LOGGER = org.slf4j.LoggerFactory.getLogger(Workspace.class);
     private final QuPathGUI qupath;
@@ -114,7 +117,7 @@ final class Workspace {
         var heading = training ? "Training" : "Prediction";
         stage.initOwner(qupath.getStage());
         stage.setTitle("CI Deep Learning Segmentation · " + heading);
-        stage.setMinWidth(570);
+        stage.setMinWidth(training ? 570 : PREDICTION_MIN_WIDTH);
         stage.setMinHeight(training ? TRAINING_MIN_HEIGHT : 510);
         WindowIcon.apply(stage);
         qupath.getStage().addEventHandler(WindowEvent.WINDOW_HIDING, event -> {
@@ -169,8 +172,11 @@ final class Workspace {
             toggleRectangleLocks.setMaxWidth(32);
             toggleRectangleLocks.setTooltip(new Tooltip());
             toggleRectangleLocks.setOnAction(event -> toggleRectangleLocks());
-            var actions = new FlowPane(8, 6, chooseImages, addCurrentImage, addClasses, addTraining,
-                    addValidation, toggleRectangleLocks, microSam.toggle());
+            addCurrentImage.getStyleClass().add("training-image-action");
+            var imageActions = trainingActions("Images", addCurrentImage, chooseImages);
+            var annotationActions = trainingActions("Annotate", addTraining, addValidation,
+                    toggleRectangleLocks, addClasses, microSam.toggle());
+            addClasses.setTooltip(new Tooltip("Make the Training and Validation classes available for manual annotation."));
             var instruction = new Label();
             var selectedTab = tabs.getSelectionModel().selectedItemProperty();
             instruction.textProperty().bind(javafx.beans.binding.Bindings.createStringBinding(() -> {
@@ -185,10 +191,11 @@ final class Workspace {
             }, selectedTab));
             instruction.setWrapText(true);
             instruction.getStyleClass().add("note");
-            var toolbar = card("Training images", trainingSummary.label(), actions, instruction);
+            var toolbar = new VBox(6, trainingSummary.content(), imageActions, annotationActions, instruction);
+            toolbar.getStyleClass().add("card");
             VBox.setMargin(toolbar, new Insets(8, 10, 0, 10));
             top.getChildren().add(toolbar);
-            expandedDetails.addAll(List.of(toolbar.getChildren().getFirst(), instruction));
+            expandedDetails.add(instruction);
         }
         content.getChildren().add(tabs);
         if (!training) {
@@ -233,7 +240,7 @@ final class Workspace {
         root.getStyleClass().add("ci-dl");
         if (training)
             addCollapseButton(header, root, content, footer, expandedDetails);
-        var scene = new Scene(root, 675, training ? 900 : 775);
+        var scene = new Scene(root, training ? 800 : 790, training ? 900 : 775);
         scene.getStylesheets().add(Workspace.class.getResource("workspace.css").toExternalForm());
         stage.setScene(scene);
 
@@ -275,6 +282,19 @@ final class Workspace {
         updateContext();
         stage.show();
         stage.toFront();
+    }
+
+    private static HBox trainingActions(String title, ButtonBase... buttons) {
+        var label = new Label(title);
+        label.getStyleClass().add("training-action-heading");
+        label.setMinWidth(64);
+        var actions = new FlowPane(7, 5, buttons);
+        actions.setPrefWrapLength(660);
+        actions.setRowValignment(VPos.CENTER);
+        HBox.setHgrow(actions, Priority.ALWAYS);
+        var row = new HBox(8, label, actions);
+        row.setAlignment(Pos.CENTER_LEFT);
+        return row;
     }
 
     private void addCollapseButton(HBox header, BorderPane root, VBox content, HBox footer,

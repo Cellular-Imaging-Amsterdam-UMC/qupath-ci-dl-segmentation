@@ -4,7 +4,7 @@ plugins {
 }
 
 group = "nl.amsterdamumc"
-version = "0.4.3"
+version = "0.4.4"
 
 java {
     toolchain.languageVersion.set(JavaLanguageVersion.of(25))

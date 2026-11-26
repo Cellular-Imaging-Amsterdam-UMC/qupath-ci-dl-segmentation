@@ -1,8 +1,11 @@
 package qupath.ext.cidl;
 
 import javafx.application.Platform;
+import javafx.geometry.VPos;
 import javafx.scene.control.Label;
 import javafx.scene.control.Tooltip;
+import javafx.scene.layout.FlowPane;
+import javafx.scene.layout.Region;
 import qupath.lib.images.ImageData;
 import qupath.lib.objects.PathObject;
 import qupath.lib.objects.classes.PathClass;
@@ -33,7 +36,10 @@ final class TrainingSelectionSummary {
     private static final PathClass VALIDATION = PathClass.fromString("Validation");
     private static final org.slf4j.Logger LOGGER = org.slf4j.LoggerFactory.getLogger(TrainingSelectionSummary.class);
 
-    private final Label label = new Label();
+    private final Label selectedImages = metric(null);
+    private final Label trainingRectangles = metric("training-key");
+    private final Label validationRectangles = metric("validation-key");
+    private final FlowPane summary = new FlowPane(6, 4, selectedImages, trainingRectangles, validationRectangles);
     private final Tooltip tooltip = new Tooltip();
     private final Set<PathObjectHierarchy> observed = Collections.newSetFromMap(new IdentityHashMap<>());
     private final AtomicBoolean redrawQueued = new AtomicBoolean();
@@ -55,15 +61,27 @@ final class TrainingSelectionSummary {
     private int images;
 
     TrainingSelectionSummary() {
-        label.setId("training-selection-summary");
-        label.getStyleClass().add("training-summary");
-        label.setTooltip(tooltip);
+        summary.setId("training-selection-summary");
+        summary.getStyleClass().add("training-summary");
+        summary.setRowValignment(VPos.CENTER);
+        Tooltip.install(summary, tooltip);
         tooltip.setWrapText(true);
         tooltip.setMaxWidth(420);
         render();
     }
 
-    Label label() {
+    FlowPane content() {
+        return summary;
+    }
+
+    private static Label metric(String color) {
+        var label = new Label();
+        label.getStyleClass().add("training-metric");
+        if (color != null) {
+            var swatch = new Region();
+            swatch.getStyleClass().addAll("training-metric-swatch", color);
+            label.setGraphic(swatch);
+        }
         return label;
     }
 
@@ -154,18 +172,20 @@ final class TrainingSelectionSummary {
     }
 
     private void render() {
-        String selected = images + (images == 1 ? " selected image" : " selected images");
+        selectedImages.setText(images + (images == 1 ? " image selected" : " images selected"));
         String details = "Totals across the selected images. Open images use current annotations. "
                 + "Closed images use the saved project annotations.";
         if (reader != null) {
-            label.setText(selected + " · Counting rectangles…");
+            trainingRectangles.setText("Training rectangles …");
+            validationRectangles.setText("Validation rectangles …");
+            details = "Counting saved rectangles.\n" + details;
         } else {
             var total = saved;
             for (var hierarchy : live)
                 total = total.plus(count(hierarchy));
             var atLeast = failed.isEmpty() ? "" : "≥";
-            label.setText(selected + " · " + tally(atLeast, total.training(), "Training")
-                    + " · " + tally(atLeast, total.validation(), "Validation"));
+            trainingRectangles.setText(tally(atLeast, total.training(), "Training"));
+            validationRectangles.setText(tally(atLeast, total.validation(), "Validation"));
             if (!failed.isEmpty())
                 details += "\nSaved annotations unavailable for " + String.join(", ", failed) + ".";
         }

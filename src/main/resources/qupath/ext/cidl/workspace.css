@@ -189,6 +189,29 @@
 }
 
 .ci-dl .training-summary {
+    -fx-border-color: transparent transparent -ci-outline transparent;
+    -fx-padding: 0 0 6 0;
+}
+
+.ci-dl .training-metric {
+    -fx-background-color: -ci-subtle;
+    -fx-background-radius: 5;
+    -fx-padding: 3 8;
+    -fx-graphic-text-gap: 6;
+    -fx-font-size: 12px;
     -fx-font-weight: bold;
-    -fx-padding: 0 0 2 0;
+}
+
+.ci-dl .training-metric-swatch {
+    -fx-min-width: 7;
+    -fx-min-height: 7;
+    -fx-background-radius: 4;
+}
+
+.ci-dl .training-action-heading {
+    -fx-font-weight: bold;
+}
+
+.ci-dl .training-image-action {
+    -fx-font-weight: bold;
 }
