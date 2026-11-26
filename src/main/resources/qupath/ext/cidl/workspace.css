@@ -149,3 +149,41 @@
 .ci-dl .rectangle-lock-active {
     -fx-text-fill: ladder(-fx-background, #9bddca 49%, #176d64 51%);
 }
+
+.ci-dl .model-methods {
+    -fx-padding: 3 0 0 0;
+}
+
+.ci-dl .model-method {
+    -fx-padding: 8 10 8 10;
+    -fx-graphic-text-gap: 7;
+}
+
+.ci-dl .model-method:selected {
+    -fx-background-color: #245b57;
+    -fx-border-color: #4a938b;
+    -fx-border-radius: 4;
+    -fx-background-radius: 4;
+}
+
+.ci-dl.model-manager .split-pane {
+    -fx-padding: 0;
+    -fx-background-color: transparent;
+}
+
+.ci-dl.model-manager .list-view .list-cell {
+    -fx-padding: 8 9;
+}
+
+.ci-dl .model-list-title {
+    -fx-font-weight: bold;
+}
+
+.ci-dl.model-manager .list-view .list-cell:filled:selected {
+    -fx-background-color: #235956;
+    -fx-text-fill: #edf6f5;
+}
+
+.ci-dl.model-manager .list-view .list-cell:filled:selected .label {
+    -fx-text-fill: #edf6f5;
+}

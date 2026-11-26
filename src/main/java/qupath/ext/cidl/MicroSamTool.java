@@ -63,6 +63,7 @@ final class MicroSamTool implements PathOverlay {
     MicroSamTool(QuPathGUI qupath, StringProperty python) {
         this.qupath = qupath;
         this.python = python;
+        Channels.useSwatches(channel);
         var base = System.getenv("CI_DL_MICROSAM_MODELS");
         if (base == null && System.getenv("QUPATH_BASE") != null)
             base = Path.of(System.getenv("QUPATH_BASE"), "models", "microsam").toString();
@@ -84,7 +85,7 @@ final class MicroSamTool implements PathOverlay {
     }
 
     ToggleButton toggle() {
-        var toggle = new ToggleButton("µSAM");
+        var toggle = new ToggleButton("µSAM", MethodIcons.microSam(15));
         toggle.setTooltip(new Tooltip("Turn interactive µSAM prompts on or off"));
         toggle.selectedProperty().bindBidirectional(enabled);
         toggle.setOnAction(event -> {

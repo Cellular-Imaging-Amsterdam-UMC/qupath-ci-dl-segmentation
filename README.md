@@ -64,9 +64,14 @@ Use the chevron in the Training header to collapse or expand the workspace. The 
 
 ## Model Manager
 
-Open **Extensions → CI Deep Learning Segmentation → Model Manager** or choose **Model Manager…** in a **Presets** menu. The list shows built-in presets and models registered in the current project or your personal library. **Import model…** registers a file or folder with a name, backend, optional version and source. From Prediction, **Save model & settings…** also saves the channels, downsample, pixel-size override, segmentation target and applicable thresholds.
+Open **Extensions → CI Deep Learning Segmentation → Model Manager**, or open it from a method's **Presets** menu. Select a method on the left, filter by library, or search model names, versions, notes and preset names. Use **Import model…** to copy a checkpoint or model folder into a library, or register its existing location. Model details include source, version, notes, favorite status and saved presets.
 
-Successful training runs register their output automatically in the project library. Entries appear in **Presets** on compatible tabs. The project library stores project-local model paths relative to the project folder. Keep a shared checkpoint inside the project when the project will be moved or shared. Removing an entry leaves its checkpoint on disk.
+- **Project** travels with the QuPath project when models are stored in its model folder. CI DL registers successful training runs here.
+- **My library** is available across projects in the current QuPath user profile.
+- **Shared** uses a folder selected with **Shared folder…**. Choose a team folder and use **Copy to → Shared** to publish the model files and its presets into that folder. Colleagues can select the same location in their own Model Manager.
+- **Move to** transfers a trained model owned by its source library. QuPath verifies the destination copy before removing the original. If another library entry points to the same files, use **Copy to** or remove the other reference first.
+
+Select a model and use **New preset…** to create named Prediction or Training settings for that method, including channel selection, resolution and the relevant inference or learning parameters. Use **Presets → Save as preset…** to capture the active tab's settings. Apply a saved preset from the manager or the method's **Presets** menu. The channel pickers show the colors from the image metadata. For a shared project, open a representative image before setting the channel mapping.
 
 ## Compare models
 
@@ -84,7 +89,7 @@ python -m pip install "micro-sam==1.8.14" "cellSAM @ git+https://github.com/vanv
 ```
 
 - **µSAM.** Toggle **µSAM** in the Training toolbar, or open **µSAM annotation…** from the extension menu. Alt-click inside an object and use Alt+Shift-click to add background points. Review the turquoise preview and click **Add annotation** to create an editable QuPath area annotation. Prompts operate on a 2D crop on the active plane. Choose a channel or RGB. Browse to a local light-microscopy ViT-B checkpoint, or let µSAM obtain its default checkpoint. The portable launcher uses `models/microsam/vit_b_lm.pt`.
-- **CellSAM.** The Prediction tab accepts `cellsam_general`, `cellsam_extra`, or a local CellSAM checkpoint through **Browse…**. The official weights require access to [DeepCell](https://users.deepcell.org/). A local checkpoint works offline. A user who already has DeepCell access can also launch QuPath with `DEEPCELL_ACCESS_TOKEN` configured to let the upstream package obtain the weights. [CellSAM backend and usage](https://github.com/vanvalenlab/cellSAM)
+- **CellSAM.** The Prediction tab accepts `cellsam_general`, `cellsam_extra`, or a local CellSAM checkpoint through **Browse…**. Download the official 1.2 archive from [Van Valen Lab on Hugging Face](https://huggingface.co/vanvalenlab/cellsam) after accepting the model terms. Extract `cellsam_general.pt` and `cellsam_extra.pt` for offline prediction. In the portable bundle, place them in `models/cellsam/` to pick them up from Presets. [CellSAM backend and usage](https://github.com/vanvalenlab/cellSAM)
 
 ## Build
 

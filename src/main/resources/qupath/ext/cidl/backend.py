@@ -298,9 +298,8 @@ def predict_instanseg(config, device):
 
 
 def predict_cellsam(config, device):
-    import os
     import torch
-    from cellSAM import get_local_model, get_model
+    from cellSAM import get_local_model
     from cellSAM.utils import fill_holes_and_remove_small_masks, normalize_image
 
     selection = config["model"]
@@ -311,12 +310,10 @@ def predict_cellsam(config, device):
         cached = sorted((Path.home() / ".deepcell" / "models").glob(f"cellsam_v*/{selection}.pt"))
         if cached:
             model = get_local_model(str(cached[-1]))
-        elif os.getenv("DEEPCELL_ACCESS_TOKEN"):
-            model = get_model(model=selection)
         else:
             raise FileNotFoundError(
-                "CellSAM requires a checkpoint from users.deepcell.org. "
-                "Choose the downloaded .pt file with Browse, or set DEEPCELL_ACCESS_TOKEN before launching QuPath."
+                "Download and unpack the official CellSAM weights from huggingface.co/vanvalenlab/cellsam. "
+                "Choose cellsam_general.pt or cellsam_extra.pt with Browse."
             )
     else:
         raise FileNotFoundError("Choose a CellSAM checkpoint file or a CellSAM preset.")

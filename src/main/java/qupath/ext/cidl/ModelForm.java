@@ -9,6 +9,7 @@ import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
+import javafx.scene.control.Menu;
 import javafx.scene.control.MenuButton;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.OverrunStyle;
@@ -83,6 +84,9 @@ final class ModelForm {
         this.training = training;
         this.window = window;
         this.library = library;
+        Channels.useSwatches(primary);
+        Channels.useSwatches(secondary);
+        Channels.useSwatches(third);
         if (engine.usesPython(training))
             python.textProperty().bindBidirectional(pythonPath);
         selectModel(engine.defaultModel(training));
@@ -320,46 +324,74 @@ final class ModelForm {
 
     private void populatePresets(MenuButton menu, List<MenuItem> fixed) {
         menu.getItems().setAll(fixed);
-        try {
-            var entries = library.entries().stream().filter(choice -> choice.entry().engine() == engine).toList();
-            if (!entries.isEmpty() && !fixed.isEmpty())
-                menu.getItems().add(new SeparatorMenuItem());
-            for (var choice : entries) {
-                var item = new MenuItem(choice.toString());
-                item.setDisable(!library.available(choice, training));
-                item.setOnAction(event -> applyPreset(choice));
-                menu.getItems().add(item);
+        var snapshot = library.snapshot(false);
+        for (var scope : library.writableScopes()) {
+            var items = new Menu(scope.title);
+            for (var choice : snapshot.models()) {
+                if (choice.scope() != scope || choice.entry().engine() != engine || !library.available(choice, training))
+                    continue;
+                var entry = choice.entry();
+                var presets = entry.presets().stream().filter(preset -> preset.training() == training).toList();
+                var use = new MenuItem(entry.name() + (entry.version().isBlank() ? "" : " · " + entry.version()));
+                use.setOnAction(event -> applySelection(new ModelLibrary.Selection(choice, null)));
+                if (presets.isEmpty()) {
+                    if (!entry.location().isBlank())
+                        items.getItems().add(use);
+                    continue;
+                }
+                var model = new Menu(use.getText());
+                if (!entry.location().isBlank()) {
+                    use.setText("Use model");
+                    model.getItems().add(use);
+                    model.getItems().add(new SeparatorMenuItem());
+                }
+                for (var preset : presets) {
+                    var item = new MenuItem(preset.name());
+                    item.setOnAction(event -> applySelection(new ModelLibrary.Selection(choice, preset)));
+                    model.getItems().add(item);
+                }
+                items.getItems().add(model);
             }
-        } catch (java.io.IOException e) {
-            var unavailable = new MenuItem(e.getMessage());
-            unavailable.setDisable(true);
-            menu.getItems().add(unavailable);
+            if (!items.getItems().isEmpty())
+                menu.getItems().add(items);
         }
         if (!menu.getItems().isEmpty())
             menu.getItems().add(new SeparatorMenuItem());
-        if (!training) {
-            var save = new MenuItem("Save model & settings…");
-            save.setOnAction(event -> {
-                try {
-                    library.saveCurrent(window, prediction());
-                } catch (IllegalArgumentException e) {
-                    var alert = new javafx.scene.control.Alert(javafx.scene.control.Alert.AlertType.WARNING, e.getMessage());
-                    alert.initOwner(window);
-                    alert.show();
-                }
-            });
-            menu.getItems().add(save);
-        }
+        var save = new MenuItem("Save as preset…");
+        save.setOnAction(event -> savePreset());
         var manage = new MenuItem("Model Manager…");
-        manage.setOnAction(event -> library.show(window));
-        menu.getItems().add(manage);
+        manage.setOnAction(event -> library.show(window, engine, training, this::applySelection));
+        menu.getItems().addAll(save, manage);
     }
 
-    private void applyPreset(ModelLibrary.Choice choice) {
+    private void savePreset() {
+        try {
+            var selected = resolvedModel();
+            var project = library.qupath().getProject();
+            var folder = project == null ? Path.of(".").toAbsolutePath() : project.getPath().toAbsolutePath().getParent();
+            var options = training ? ModelLibrary.Options.from(training(folder)) : ModelLibrary.Options.from(prediction());
+            var model = library.currentModel(engine, selected, training);
+            var draft = new ModelLibrary.Preset(ModelLibrary.newId(), "", training, options);
+            var result = PresetEditor.open(window, library, model, draft, training);
+            if (result != null) {
+                var stored = library.savePreset(result.scope(), model, result.preset());
+                applySelection(new ModelLibrary.Selection(stored, result.preset()));
+            }
+        } catch (java.io.IOException | RuntimeException e) {
+            var alert = new javafx.scene.control.Alert(javafx.scene.control.Alert.AlertType.WARNING, e.getMessage());
+            alert.initOwner(window);
+            alert.show();
+        }
+    }
+
+    void applySelection(ModelLibrary.Selection selection) {
+        var choice = selection.model();
+        var preset = selection.preset();
         selectModel(library.resolve(choice, training));
         var entry = choice.entry();
-        modelAlias.set(entry.name() + (entry.version().isBlank() ? "" : " · " + entry.version()));
-        var settings = choice.entry().options();
+        modelAlias.set(preset == null ? entry.name() + (entry.version().isBlank() ? "" : " · " + entry.version())
+                : entry.name() + " · " + preset.name());
+        var settings = preset == null ? entry.options() : preset.options();
         if (settings == null)
             return;
         if (settings.channels() != null) {
@@ -371,10 +403,32 @@ final class ModelForm {
         setValue(pixelSize, settings.pixelSize());
         setValue(mean, settings.mean());
         setValue(gaussian, settings.gaussian());
-        if (!training && settings.cells() != null) {
-            target.setValue(settings.cells() ? "Cells" : "Nuclei");
-            threshold.setText(settings.threshold() == null ? "" : settings.threshold().toString());
-            nms.setText(settings.nms() == null ? "" : settings.nms().toString());
+        if (settings.device() != null)
+            device.setValue(switch (settings.device()) {
+                case "cpu" -> "CPU";
+                case "cuda" -> "CUDA";
+                default -> "Auto";
+            });
+        if (training) {
+            if (engine == Engine.CELLPOSE)
+                setValue(diameter, settings.diameter());
+            var values = settings.training();
+            if (values != null) {
+                setValue(epochs, values.epochs());
+                setValue(rate, values.rate());
+                setValue(batch, values.batch());
+                setValue(masks, values.minimumMasks());
+                setValue(crop, values.crop());
+                setValue(sigma, values.sigma());
+            }
+        } else if (settings.training() == null) {
+            if (settings.cells() != null)
+                target.setValue(settings.cells() ? "Cells" : "Nuclei");
+            if (preset != null || settings.cells() != null) {
+                threshold.setText(settings.threshold() == null ? (engine == Engine.STARDIST_QP ? "0.5" : "")
+                        : settings.threshold().toString());
+                nms.setText(settings.nms() == null ? "" : settings.nms().toString());
+            }
             setValue(diameter, settings.diameter());
             setValue(flow, settings.flow());
             setValue(distance, settings.minDistance());
@@ -383,6 +437,12 @@ final class ModelForm {
             setValue(expansion, settings.expansion());
             if (settings.excludeBorder() != null)
                 excludeBorder.setSelected(settings.excludeBorder());
+            if (settings.annotations() != null)
+                annotations.setSelected(settings.annotations());
+            if (settings.measurements() != null)
+                measurements.setSelected(settings.measurements());
+            if (settings.replaceSpots() != null)
+                replaceSpots.setSelected(settings.replaceSpots());
         }
     }
 
@@ -394,9 +454,7 @@ final class ModelForm {
     private static void applyChannel(ComboBox<Channels.Choice> combo, Channels.Choice saved) {
         if (saved == null)
             return;
-        combo.setValue(combo.getItems().stream().filter(choice -> choice.equals(saved)).findFirst()
-                .or(() -> combo.getItems().stream().filter(choice -> choice.name().equals(saved.name())).findFirst())
-                .orElse(null));
+        combo.setValue(Channels.match(combo.getItems(), saved));
     }
 
     private void selectModel(String location) {
@@ -490,18 +548,18 @@ final class ModelForm {
     }
 
     void updateChannels(List<Channels.Choice> choices) {
-        var oldPrimary = primary.getValue();
-        var oldSecondary = secondary.getValue();
-        var oldThird = third.getValue();
+        var oldPrimary = Channels.match(choices, primary.getValue());
+        var oldSecondary = Channels.match(choices, secondary.getValue());
+        var oldThird = Channels.match(choices, third.getValue());
         primary.getItems().setAll(choices);
-        primary.setValue(oldPrimary != null && choices.contains(oldPrimary) ? oldPrimary : Channels.initial(choices));
+        primary.setValue(oldPrimary == null ? Channels.initial(choices) : oldPrimary);
         var second = new ArrayList<Channels.Choice>();
         second.add(Channels.NONE);
         second.addAll(choices);
         secondary.getItems().setAll(second);
-        secondary.setValue(oldSecondary != null && second.contains(oldSecondary) ? oldSecondary : Channels.NONE);
+        secondary.setValue(oldSecondary == null ? Channels.NONE : oldSecondary);
         third.getItems().setAll(second);
-        third.setValue(oldThird != null && second.contains(oldThird) ? oldThird : Channels.NONE);
+        third.setValue(oldThird == null ? Channels.NONE : oldThird);
     }
 
     private static GridPane grid() {

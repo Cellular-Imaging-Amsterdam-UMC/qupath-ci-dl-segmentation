@@ -36,8 +36,18 @@ public final class CiDeepLearningExtension implements QuPathExtension {
             training.show();
         });
         var models = new MenuItem("Model Manager…");
-        models.setOnAction(event -> library.show(qupath.getStage()));
-        var prompt = new MenuItem("µSAM annotation…");
+        models.setOnAction(event -> library.show(qupath.getStage(), null, null, selection -> {
+            if (selection.preset() != null && selection.preset().training()) {
+                if (training == null)
+                    training = new Workspace(qupath, true, pythonPaths, library, microSam);
+                training.showSelection(selection);
+            } else {
+                if (prediction == null)
+                    prediction = new Workspace(qupath, false, pythonPaths, library, microSam);
+                prediction.showSelection(selection);
+            }
+        }));
+        var prompt = new MenuItem("µSAM annotation…", MethodIcons.microSam(16));
         prompt.setOnAction(event -> microSam.show());
         menu.getItems().addAll(predict, train, models, prompt);
         qupath.getMenu("Extensions", true).getItems().add(menu);

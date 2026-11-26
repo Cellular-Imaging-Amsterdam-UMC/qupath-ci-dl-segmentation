@@ -4,3 +4,11 @@ https://github.com/Cellular-Imaging-Amsterdam-UMC/qupath-ci-pixel-classifier
 
 The Gradle Wrapper is redistributed under the Apache License 2.0.
 See gradle/wrapper/LICENSE in the source repository.
+
+Method artwork (unaltered upstream assets) and full license texts are in
+qupath/ext/cidl/method-icons/ in the extension JAR.
+- Cellpose, BSD 3-Clause. https://github.com/MouseLand/cellpose/blob/a54cb48849b7e225a81e8e43dcb042d42427f543/cellpose/logo/logo.png
+- StarDist, BSD 3-Clause. https://github.com/stardist/stardist/blob/e80c6de700693bc228ed3c9ba1dc19c3785667ee/images/stardist_logo.jpg
+- InstanSeg, Apache 2.0. https://github.com/instanseg/instanseg/blob/414fbc9e8039c1d049cc27871d66409084ded21c/assets/instanseg_logo.png
+- Spotiflow, BSD 3-Clause. https://github.com/weigertlab/spotiflow/blob/b4f464552afc3424944a9c0fa60ac024e4013f1f/artwork/logo_squared.png
+- µSAM v1, MIT. https://github.com/computational-cell-analytics/micro-sam/blob/dab3082cf90076c12fb7b933f799e59787d43676/doc/logo/v1/logo.png

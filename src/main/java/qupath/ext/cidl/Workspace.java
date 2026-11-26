@@ -124,6 +124,7 @@ final class Workspace {
                 continue;
             var form = new ModelForm(engine, training, stage, pythonPaths.get(engine), library);
             var tab = new Tab(engine.title, form.content());
+            tab.setGraphic(MethodIcons.view(engine, 15));
             tab.setUserData(engine);
             tabs.getTabs().add(tab);
             forms.put(engine, form);
@@ -222,6 +223,15 @@ final class Workspace {
             });
         }
         updateContext();
+    }
+
+    void showSelection(ModelLibrary.Selection selection) {
+        var engine = selection.model().entry().engine();
+        show();
+        tabs.getTabs().stream().filter(tab -> tab.getUserData() == engine).findFirst().ifPresent(tab -> {
+            tabs.getSelectionModel().select(tab);
+            forms.get(engine).applySelection(selection);
+        });
     }
 
     void show() {
