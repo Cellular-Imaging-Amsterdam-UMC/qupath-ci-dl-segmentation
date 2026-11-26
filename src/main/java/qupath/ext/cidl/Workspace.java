@@ -136,9 +136,9 @@ final class Workspace {
             addTraining.setOnAction(event -> addRectangle("Training"));
             addValidation.setOnAction(event -> addRectangle("Validation"));
             toggleRectangleLocks.setId("toggle-rectangle-locks");
-            toggleRectangleLocks.setMinWidth(30);
-            toggleRectangleLocks.setPrefWidth(30);
-            toggleRectangleLocks.setMaxWidth(30);
+            toggleRectangleLocks.setMinWidth(32);
+            toggleRectangleLocks.setPrefWidth(32);
+            toggleRectangleLocks.setMaxWidth(32);
             toggleRectangleLocks.setTooltip(new Tooltip());
             toggleRectangleLocks.setOnAction(event -> toggleRectangleLocks());
             var actions = new FlowPane(8, 6, chooseImages, addClasses, addTraining, addValidation, toggleRectangleLocks);
