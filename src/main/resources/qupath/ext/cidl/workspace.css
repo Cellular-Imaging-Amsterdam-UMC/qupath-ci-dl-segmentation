@@ -76,6 +76,14 @@
     -fx-font-weight: bold;
 }
 
+.ci-dl .model-selection {
+    -fx-padding: 3 7;
+    -fx-background-color: -ci-subtle;
+    -fx-background-radius: 4;
+    -fx-border-color: -ci-outline;
+    -fx-border-radius: 4;
+}
+
 .ci-dl .note {
     -fx-font-size: 12px;
 }

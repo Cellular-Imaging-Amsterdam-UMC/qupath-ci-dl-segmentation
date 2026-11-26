@@ -31,6 +31,8 @@ The extension recognizes `CELLPOSE_LOCAL_MODELS_PATH`, `STARDIST_LOCAL_MODELS_PA
 
 ## Prediction
 
+Choose a model with **Browse…** or **Presets**. In Prediction and Training, the model label shows a short name. Hover over it to see the full selection. Models that support training from scratch offer that option in **Presets**.
+
 1. Open an image. Select one or more area annotations or TMA cores in the viewer.
 2. Open **Prediction**, choose a model tab, then set the model, channel, and downsample. Cellpose supports a built-in model name such as `cyto3` or a model file. Spotiflow supports a built-in 2D model name such as `general` or a model folder.
 3. Click **Run prediction**. Watch the log or click **Stop** to cancel. Completed results are added under the original regions.

@@ -1,6 +1,7 @@
 package qupath.ext.cidl;
 
 import javafx.beans.binding.Bindings;
+import javafx.beans.property.SimpleStringProperty;
 import javafx.beans.property.StringProperty;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
@@ -10,7 +11,9 @@ import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.MenuButton;
 import javafx.scene.control.MenuItem;
+import javafx.scene.control.OverrunStyle;
 import javafx.scene.control.ScrollPane;
+import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.control.TextField;
 import javafx.scene.control.TitledPane;
 import javafx.scene.control.Tooltip;
@@ -40,7 +43,7 @@ final class ModelForm {
     private final Window window;
     private final TextField python = new TextField();
     private final ComboBox<String> device = new ComboBox<>();
-    private final TextField model = new TextField();
+    private final StringProperty model = new SimpleStringProperty();
     private final ComboBox<Channels.Choice> primary = new ComboBox<>();
     private final ComboBox<Channels.Choice> secondary = new ComboBox<>();
     private final ComboBox<Channels.Choice> third = new ComboBox<>();
@@ -75,21 +78,7 @@ final class ModelForm {
         this.window = window;
         if (engine.usesPython(training))
             python.textProperty().bindBidirectional(pythonPath);
-        model.setText(engine.defaultModel(training));
-        model.setPromptText(training && engine != Engine.CELLPOSE_SAM ? "Train from scratch" : switch (engine) {
-            case CELLPOSE -> "cyto3, nuclei or model file";
-            case CELLPOSE_SAM -> "Choose a pretrained Cellpose 4 checkpoint";
-            case SPOTIFLOW -> "general or model folder";
-            case STARDIST -> "StarDist PyTorch model folder";
-            case STARDIST_QP -> "Choose a StarDist .pb or .onnx file";
-            case INSTANSEG -> "InstanSeg model folder or TorchScript file";
-        });
-        if (training && engine == Engine.INSTANSEG)
-            model.setTooltip(new Tooltip("Optional weights.pt from a previous CI DL InstanSeg training run."));
-        var modelPath = new Tooltip();
-        modelPath.textProperty().bind(model.textProperty());
-        if (model.getTooltip() == null)
-            model.setTooltip(modelPath);
+        model.set(engine.defaultModel(training));
         device.getItems().setAll("Auto", "CPU", "CUDA");
         device.getSelectionModel().selectFirst();
         secondary.getItems().add(Channels.NONE);
@@ -239,64 +228,132 @@ final class ModelForm {
     private HBox pythonPicker() {
         python.setPromptText("python on PATH");
         var browse = new Button("Browse…");
-        browse.setOnAction(event -> pickFile(python, "Choose Python executable", null));
+        browse.setOnAction(event -> {
+            var selected = fileChooser("Choose Python executable", python.getText(), null).showOpenDialog(window);
+            if (selected != null)
+                python.setText(selected.getAbsolutePath());
+        });
         var row = new HBox(6, python, browse);
         HBox.setHgrow(python, Priority.ALWAYS);
         return row;
     }
 
+    private boolean canTrainFromScratch() {
+        return training && engine != Engine.CELLPOSE_SAM;
+    }
+
     private HBox modelPicker() {
-        var browse = new Button(engine.browsesFolders(training) ? "Folder…" : "Browse…");
-        browse.setOnAction(event -> {
-            if (engine.browsesFolders(training)) {
-                var chooser = new DirectoryChooser();
-                chooser.setTitle("Choose " + engine.title + " model folder");
-                var initial = initialDirectory(model, engine.modelDirectory(training));
-                if (initial != null)
-                    chooser.setInitialDirectory(initial.toFile());
-                var selected = chooser.showDialog(window);
-                if (selected != null)
-                    model.setText(selected.getAbsolutePath());
-            } else {
-                pickFile(model, "Choose " + engine.title + " model",
-                        engine.modelDirectory(training));
-            }
-        });
-        var row = new HBox(6, model, browse);
-        HBox.setHgrow(model, Priority.ALWAYS);
+        String empty = canTrainFromScratch() ? "Train from scratch" : "Choose a model";
+        var display = new Label();
+        display.getStyleClass().add("model-selection");
+        display.setMinWidth(0);
+        display.setMaxWidth(Double.MAX_VALUE);
+        display.setTextOverrun(OverrunStyle.CENTER_ELLIPSIS);
+        display.textProperty().bind(Bindings.createStringBinding(
+                () -> model.get().isBlank() ? empty : modelDisplayName(model.get()), model));
+
+        var tooltip = new Tooltip();
+        tooltip.setWrapText(true);
+        tooltip.setMaxWidth(620);
+        tooltip.textProperty().bind(Bindings.createStringBinding(() -> {
+            if (!model.get().isBlank())
+                return model.get();
+            return training && engine == Engine.INSTANSEG
+                    ? "Browse for weights.pt from a previous CI DL InstanSeg run to fine-tune."
+                    : empty;
+        }, model));
+        display.setTooltip(tooltip);
+        display.accessibleTextProperty().bind(tooltip.textProperty());
+
+        Node browse;
+        if (engine == Engine.INSTANSEG && !training) {
+            var folder = new MenuItem("Model folder…");
+            folder.setOnAction(event -> browseModelFolder());
+            var file = new MenuItem("TorchScript file…");
+            file.setOnAction(event -> browseModelFile());
+            browse = new MenuButton("Browse…", null, folder, file);
+        } else {
+            var button = new Button("Browse…");
+            button.setOnAction(event -> {
+                if (engine.browsesFolders(training))
+                    browseModelFolder();
+                else
+                    browseModelFile();
+            });
+            browse = button;
+        }
+
+        var row = new HBox(6, display, browse);
+        row.setAlignment(Pos.CENTER_LEFT);
+        HBox.setHgrow(display, Priority.ALWAYS);
         var presets = engine.modelPresets(training);
-        if (!presets.isEmpty()) {
+        if (!presets.isEmpty() || canTrainFromScratch()) {
             var menu = new MenuButton("Presets");
+            if (canTrainFromScratch()) {
+                var scratch = new MenuItem("Train from scratch");
+                scratch.setOnAction(event -> model.set(""));
+                menu.getItems().add(scratch);
+                if (!presets.isEmpty())
+                    menu.getItems().add(new SeparatorMenuItem());
+            }
             for (var preset : presets) {
                 var item = new MenuItem(preset);
-                item.setOnAction(event -> model.setText(engine.modelChoice(preset, training)));
+                item.setOnAction(event -> model.set(engine.modelChoice(preset, training)));
                 menu.getItems().add(item);
             }
             row.getChildren().add(menu);
         }
-        if (training && engine != Engine.CELLPOSE_SAM) {
-            var clear = new Button("Clear");
-            clear.setOnAction(event -> model.clear());
-            row.getChildren().add(clear);
-        }
         return row;
     }
 
-    private void pickFile(TextField field, String title, Path modelDirectory) {
-        var chooser = new FileChooser();
-        chooser.setTitle(title);
-        var initial = initialDirectory(field, modelDirectory);
-        if (initial != null)
-            chooser.setInitialDirectory(initial.toFile());
-        if (field == model && engine == Engine.STARDIST_QP && !training)
-            chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("StarDist model", "*.pb", "*.onnx"));
-        var selected = chooser.showOpenDialog(window);
-        if (selected != null)
-            field.setText(selected.getAbsolutePath());
+    static String modelDisplayName(String selection) {
+        var path = Path.of(selection);
+        var filename = path.getFileName();
+        if (filename == null)
+            return selection;
+        var name = filename.toString();
+        var parent = path.getParent();
+        if (parent != null && parent.getFileName() != null
+                && List.of("instanseg.pt", "model.onnx", "weights.pt", "weights_best.pt")
+                    .contains(name.toLowerCase(Locale.ROOT))) {
+            return parent.getFileName() + " / " + name;
+        }
+        return name;
     }
 
-    private static Path initialDirectory(TextField field, Path directory) {
-        var text = field.getText().strip();
+    private void browseModelFolder() {
+        var chooser = new DirectoryChooser();
+        chooser.setTitle("Choose " + engine.title + " model folder");
+        var initial = initialDirectory(model.get(), engine.modelDirectory(training));
+        if (initial != null)
+            chooser.setInitialDirectory(initial.toFile());
+        var selected = chooser.showDialog(window);
+        if (selected != null)
+            model.set(selected.getAbsolutePath());
+    }
+
+    private void browseModelFile() {
+        var chooser = fileChooser("Choose " + engine.title + " model", model.get(), engine.modelDirectory(training));
+        if (engine == Engine.STARDIST_QP && !training)
+            chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("StarDist model", "*.pb", "*.onnx"));
+        if (engine == Engine.INSTANSEG)
+            chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("InstanSeg model", "*.pt"));
+        var selected = chooser.showOpenDialog(window);
+        if (selected != null)
+            model.set(selected.getAbsolutePath());
+    }
+
+    private static FileChooser fileChooser(String title, String selection, Path directory) {
+        var chooser = new FileChooser();
+        chooser.setTitle(title);
+        var initial = initialDirectory(selection, directory);
+        if (initial != null)
+            chooser.setInitialDirectory(initial.toFile());
+        return chooser;
+    }
+
+    private static Path initialDirectory(String selection, Path directory) {
+        var text = selection.strip();
         try {
             if (!text.isEmpty()) {
                 var path = Path.of(text);
@@ -430,9 +487,9 @@ final class ModelForm {
     }
 
     private String resolvedModel() {
-        var value = model.getText().strip();
+        var value = model.get().strip();
         if (value.isEmpty()) {
-            if (training && engine != Engine.CELLPOSE_SAM)
+            if (canTrainFromScratch())
                 return "";
             throw new IllegalArgumentException("Choose a " + engine.title + " model.");
         }
