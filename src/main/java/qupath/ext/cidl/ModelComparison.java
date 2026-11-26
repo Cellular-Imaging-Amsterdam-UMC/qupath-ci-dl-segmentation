@@ -102,8 +102,8 @@ final class ModelComparison {
         opacity.disableProperty().bind(show.selectedProperty().not());
         HBox.setHgrow(divider, Priority.ALWAYS);
         HBox.setHgrow(opacity, Priority.ALWAYS);
-        aLabel.setStyle("-fx-text-fill: #42dcb8;");
-        bLabel.setStyle("-fx-text-fill: #f9ac64;");
+        aLabel.getStyleClass().add("comparison-model-a");
+        bLabel.getStyleClass().add("comparison-model-b");
         aLabel.setWrapText(true);
         bLabel.setWrapText(true);
         summary.setWrapText(true);

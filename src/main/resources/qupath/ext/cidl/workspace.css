@@ -215,3 +215,11 @@
 .ci-dl .training-image-action {
     -fx-font-weight: bold;
 }
+
+.ci-dl .comparison-model-a {
+    -fx-text-fill: ladder(-fx-background, #42dcb8 49%, #176354 51%);
+}
+
+.ci-dl .comparison-model-b {
+    -fx-text-fill: ladder(-fx-background, #f9ac64 49%, #89501d 51%);
+}

@@ -1,6 +1,7 @@
 package qupath.ext.cidl;
 
 import javafx.application.Platform;
+import javafx.beans.binding.Bindings;
 import javafx.beans.property.StringProperty;
 import javafx.beans.value.ChangeListener;
 import javafx.collections.ListChangeListener;
@@ -39,6 +40,7 @@ import qupath.lib.objects.PathObject;
 import qupath.lib.objects.PathObjects;
 import qupath.lib.objects.classes.PathClass;
 import qupath.lib.objects.hierarchy.PathObjectHierarchy;
+import qupath.lib.objects.hierarchy.events.PathObjectHierarchyEvent.HierarchyEventType;
 import qupath.lib.objects.hierarchy.events.PathObjectHierarchyListener;
 import qupath.lib.projects.ProjectImageEntry;
 
@@ -87,9 +89,21 @@ final class Workspace {
     private final ConcurrentLinkedQueue<String> pending = new ConcurrentLinkedQueue<>();
     private final AtomicBoolean logScheduled = new AtomicBoolean();
     private final AtomicBoolean rectangleRefreshScheduled = new AtomicBoolean();
+    private PathObjectHierarchy rectangleHierarchy;
     private final PathObjectHierarchyListener rectangleListener = event -> {
         if (event.isChanging() || event.isObjectMeasurementEvent())
             return;
+        if (event.getEventType() == HierarchyEventType.ADDED || event.isObjectClassificationEvent()) {
+            var changed = event.getChangedObjects();
+            if (changed.stream().anyMatch(TrainingSelectionSummary::isRectangle)) {
+                Platform.runLater(() -> {
+                    if (rectangleHierarchy == event.getHierarchy()
+                            && changed.stream().anyMatch(object -> object.getParent() != null
+                                    && TrainingSelectionSummary.isRectangle(object)))
+                        addCurrentImage();
+                });
+            }
+        }
         if (Platform.isFxApplicationThread()) {
             refreshRectangleLockIndicator();
         } else if (rectangleRefreshScheduled.compareAndSet(false, true)) {
@@ -99,7 +113,6 @@ final class Workspace {
             });
         }
     };
-    private PathObjectHierarchy rectangleHierarchy;
     private FontAwesome.Glyph rectangleLockGlyph;
     private Job active;
     private ModelComparison comparison;
@@ -152,7 +165,7 @@ final class Workspace {
 
         var content = new VBox(8);
         var top = new VBox(header);
-        var expandedDetails = new ArrayList<Node>();
+        var trainingHint = new Label();
         if (training) {
             chooseImages.setGraphic(IconFactory.createNode(FontAwesome.Glyph.PICTURE_ALT, 14));
             addCurrentImage.setGraphic(IconFactory.createNode(FontAwesome.Glyph.PLUS_CIRCLE, 14));
@@ -177,9 +190,8 @@ final class Workspace {
             var annotationActions = trainingActions("Annotate", addTraining, addValidation,
                     toggleRectangleLocks, addClasses, microSam.toggle());
             addClasses.setTooltip(new Tooltip("Make the Training and Validation classes available for manual annotation."));
-            var instruction = new Label();
             var selectedTab = tabs.getSelectionModel().selectedItemProperty();
-            instruction.textProperty().bind(javafx.beans.binding.Bindings.createStringBinding(() -> {
+            trainingHint.textProperty().bind(Bindings.createStringBinding(() -> {
                 String regions = "Lock rectangles before labeling. ";
                 if (selectedTab.get() == null)
                     return regions;
@@ -189,13 +201,12 @@ final class Workspace {
                     default -> regions + "Draw one area annotation per instance.";
                 };
             }, selectedTab));
-            instruction.setWrapText(true);
-            instruction.getStyleClass().add("note");
-            var toolbar = new VBox(6, trainingSummary.content(), imageActions, annotationActions, instruction);
+            trainingHint.setWrapText(true);
+            trainingHint.getStyleClass().add("note");
+            var toolbar = new VBox(6, trainingSummary.content(), imageActions, annotationActions, trainingHint);
             toolbar.getStyleClass().add("card");
             VBox.setMargin(toolbar, new Insets(8, 10, 0, 10));
             top.getChildren().add(toolbar);
-            expandedDetails.add(instruction);
         }
         content.getChildren().add(tabs);
         if (!training) {
@@ -239,7 +250,7 @@ final class Workspace {
         var root = new BorderPane(content, top, null, footer, null);
         root.getStyleClass().add("ci-dl");
         if (training)
-            addCollapseButton(header, root, content, footer, expandedDetails);
+            addCollapseButton(header, root, content, footer, trainingHint);
         var scene = new Scene(root, training ? 800 : 790, training ? 900 : 775);
         scene.getStylesheets().add(Workspace.class.getResource("workspace.css").toExternalForm());
         stage.setScene(scene);
@@ -298,7 +309,7 @@ final class Workspace {
     }
 
     private void addCollapseButton(HBox header, BorderPane root, VBox content, HBox footer,
-                                   List<Node> expandedDetails) {
+                                   Node trainingHint) {
         var toggle = new ToggleButton();
         toggle.setId("training-layout-toggle");
         toggle.setMinWidth(34);
@@ -317,10 +328,8 @@ final class Workspace {
             toggle.setAccessibleText(tooltip.getText());
             glyph.setRotate(collapsed ? 180 : 0);
             context.setWrapText(!collapsed);
-            for (var detail : expandedDetails) {
-                detail.setVisible(!collapsed);
-                detail.setManaged(!collapsed);
-            }
+            trainingHint.setVisible(!collapsed);
+            trainingHint.setManaged(!collapsed);
             if (collapsed) {
                 expandedHeight = stage.getHeight();
                 expandedMaximized = stage.isMaximized();
@@ -394,8 +403,10 @@ final class Workspace {
             var project = qupath.getProject();
             if (project == null)
                 selected.clear();
-            else
-                selected.removeIf(entry -> !project.getImageList().contains(entry));
+            else if (!selected.isEmpty()) {
+                var projectImages = new HashSet<>(project.getImageList());
+                selected.removeIf(entry -> !projectImages.contains(entry));
+            }
             var entry = project == null || data == null ? null : project.getEntry(data);
             chooseImages.setDisable(active != null || project == null);
             boolean alreadySelected = selected.contains(entry);
@@ -418,7 +429,7 @@ final class Workspace {
             if (project == null) {
                 context.setText("Open a QuPath project to add training images.");
             } else if (selected.isEmpty()) {
-                context.setText("Add at least one image to start training.");
+                context.setText("Add a project image or create a Training or Validation rectangle to get started.");
             } else {
                 var reference = alreadySelected ? entry : selected.getFirst();
                 var live = open.get(reference);
@@ -443,16 +454,21 @@ final class Workspace {
     }
 
     private void addCurrentImage() {
-        var project = qupath.getProject();
-        var data = qupath.getImageData();
-        if (active != null || project == null || data == null)
-            return;
-        var entry = project.getEntry(data);
-        if (entry != null && !selected.contains(entry)) {
-            selected.add(entry);
-            updateContext();
+        var entry = includeTrainingImage(qupath.getImageData());
+        if (entry != null)
             status.setText("Added " + entry.getImageName() + " to training images.");
-        }
+    }
+
+    private ProjectImageEntry<BufferedImage> includeTrainingImage(ImageData<BufferedImage> data) {
+        var project = qupath.getProject();
+        if (active != null || project == null || data == null)
+            return null;
+        var entry = project.getEntry(data);
+        if (entry == null || selected.contains(entry))
+            return null;
+        selected.add(entry);
+        updateContext();
+        return entry;
     }
 
     private void chooseImages() {
@@ -508,7 +524,9 @@ final class Workspace {
                 registerClasses(List.of(pathClass));
                 viewer.setSelectedObject(annotation);
                 viewer.setCenterPixelLocation(roi.getCentroidX(), roi.getCentroidY());
-                status.setText("Added a " + classification + " rectangle (" + side + " × " + side + " px).");
+                var addedImage = includeTrainingImage(data);
+                status.setText("Added a " + classification + " rectangle (" + side + " × " + side + " px)."
+                        + (addedImage == null ? "" : " Image added to training selection."));
             }
         } catch (IllegalArgumentException e) {
             status.setText(e.getMessage());

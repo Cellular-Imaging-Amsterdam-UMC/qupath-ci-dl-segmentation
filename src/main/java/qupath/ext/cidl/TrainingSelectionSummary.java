@@ -201,7 +201,9 @@ final class TrainingSelectionSummary {
             return ZERO;
         long training = 0;
         long validation = 0;
-        for (var rectangle : rectangles(hierarchy)) {
+        for (var rectangle : hierarchy.getAnnotationObjects()) {
+            if (!isRectangle(rectangle))
+                continue;
             if (TRAINING.equals(rectangle.getPathClass()))
                 training++;
             else
@@ -212,8 +214,12 @@ final class TrainingSelectionSummary {
 
     static List<PathObject> rectangles(PathObjectHierarchy hierarchy) {
         return hierarchy.getAnnotationObjects().stream()
-                .filter(object -> object.getROI() instanceof RectangleROI && !object.getROI().isEmpty())
-                .filter(object -> TRAINING.equals(object.getPathClass()) || VALIDATION.equals(object.getPathClass()))
+                .filter(TrainingSelectionSummary::isRectangle)
                 .toList();
+    }
+
+    static boolean isRectangle(PathObject object) {
+        return object.isAnnotation() && object.getROI() instanceof RectangleROI rectangle && !rectangle.isEmpty()
+                && (TRAINING.equals(object.getPathClass()) || VALIDATION.equals(object.getPathClass()));
     }
 }

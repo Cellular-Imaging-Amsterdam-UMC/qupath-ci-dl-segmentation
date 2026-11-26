@@ -48,7 +48,7 @@ final class ModelForm {
     private final StringProperty model = new SimpleStringProperty();
     private final StringProperty modelAlias = new SimpleStringProperty("");
     private final ComboBox<Channels.Choice> primary = new ComboBox<>();
-    private final Label trainingImageNotice = new Label("Add at least one project image above to choose channels.");
+    private final Label trainingImageNotice = new Label("Add at least one project image or create a training region to choose channels.");
     private final ComboBox<Channels.Choice> secondary = new ComboBox<>();
     private final ComboBox<Channels.Choice> third = new ComboBox<>();
     private final TextField downsample = new TextField("1");
@@ -569,6 +569,9 @@ final class ModelForm {
     }
 
     void updateChannels(List<Channels.Choice> choices) {
+        if (primary.getItems().equals(choices) && primary.getValue() != null
+                && secondary.getValue() != null && third.getValue() != null)
+            return;
         var oldPrimary = Channels.match(choices, primary.getValue());
         var oldSecondary = Channels.match(choices, secondary.getValue());
         var oldThird = Channels.match(choices, third.getValue());
