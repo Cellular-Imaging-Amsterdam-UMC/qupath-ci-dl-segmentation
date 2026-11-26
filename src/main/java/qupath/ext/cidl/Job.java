@@ -51,26 +51,9 @@ final class Job {
 
     void python(String executable, Path work, Map<String, Object> config) throws IOException, InterruptedException {
         check();
-        var script = work.resolve("backend.py");
-        try (var source = Job.class.getResourceAsStream("backend.py")) {
-            if (source == null)
-                throw new IOException("The Python backend is missing from the extension JAR.");
-            Files.copy(source, script);
-        }
         var manifest = work.resolve("job.json");
         Files.writeString(manifest, new Gson().toJson(config));
-        var builder = new ProcessBuilder(executable, "-u", script.toString(), manifest.toString());
-        builder.directory(work.toFile()).redirectErrorStream(true);
-        var env = builder.environment();
-        env.put("PYTHONIOENCODING", "utf-8");
-        env.put("PYTHONUNBUFFERED", "1");
-        if (System.getProperty("os.name").startsWith("Windows") && !executable.equals("python")) {
-            var python = Path.of(executable).getParent();
-            var prefix = python.getFileName().toString().equalsIgnoreCase("Scripts") ? python.getParent() : python;
-            var entries = List.of(python.toString(), prefix.resolve("Library/bin").toString(),
-                    prefix.resolve("Scripts").toString(), env.getOrDefault("PATH", ""));
-            env.put("PATH", String.join(java.io.File.pathSeparator, entries));
-        }
+        var builder = pythonProcess(executable, work, manifest.toString());
         Process started;
         synchronized (this) {
             check();
@@ -97,6 +80,28 @@ final class Job {
                 process = null;
             }
         }
+    }
+
+    static ProcessBuilder pythonProcess(String executable, Path work, String argument) throws IOException {
+        var script = work.resolve("backend.py");
+        try (var source = Job.class.getResourceAsStream("backend.py")) {
+            if (source == null)
+                throw new IOException("The Python backend is missing from the extension JAR.");
+            Files.copy(source, script);
+        }
+        var builder = new ProcessBuilder(executable, "-u", script.toString(), argument);
+        builder.directory(work.toFile()).redirectErrorStream(true);
+        var env = builder.environment();
+        env.put("PYTHONIOENCODING", "utf-8");
+        env.put("PYTHONUNBUFFERED", "1");
+        var python = Path.of(executable).toAbsolutePath().getParent();
+        if (System.getProperty("os.name").startsWith("Windows") && Path.of(executable).getParent() != null) {
+            var prefix = python.getFileName().toString().equalsIgnoreCase("Scripts") ? python.getParent() : python;
+            var entries = List.of(python.toString(), prefix.resolve("Library/bin").toString(),
+                    prefix.resolve("Scripts").toString(), env.getOrDefault("PATH", ""));
+            env.put("PATH", String.join(java.io.File.pathSeparator, entries));
+        }
+        return builder;
     }
 
     static void cleanup(Path directory, Consumer<String> log) {

@@ -256,26 +256,15 @@ final class ModelForm {
 
     private HBox modelPicker() {
         String empty = canTrainFromScratch() ? "Train from scratch" : "Choose a model";
-        var display = new Label();
-        display.getStyleClass().add("model-selection");
-        display.setMinWidth(0);
-        display.setMaxWidth(Double.MAX_VALUE);
-        display.setTextOverrun(OverrunStyle.CENTER_ELLIPSIS);
-        display.textProperty().bind(Bindings.createStringBinding(
-                () -> model.get().isBlank() ? empty : selectedModelName(), model, modelAlias));
-
-        var tooltip = new Tooltip();
-        tooltip.setWrapText(true);
-        tooltip.setMaxWidth(620);
-        tooltip.textProperty().bind(Bindings.createStringBinding(() -> {
-            if (!model.get().isBlank())
-                return model.get();
-            return training && engine == Engine.INSTANSEG
-                    ? "Browse for weights.pt from a previous CI DL InstanSeg run to fine-tune."
-                    : empty;
-        }, model));
-        display.setTooltip(tooltip);
-        display.accessibleTextProperty().bind(tooltip.textProperty());
+        var display = modelDisplay(
+                Bindings.createStringBinding(() -> model.get().isBlank() ? empty : selectedModelName(), model, modelAlias),
+                Bindings.createStringBinding(() -> {
+                    if (!model.get().isBlank())
+                        return model.get();
+                    return training && engine == Engine.INSTANSEG
+                            ? "Browse for weights.pt from a previous CI DL InstanSeg run to fine-tune."
+                            : empty;
+                }, model));
 
         Node browse;
         if (engine == Engine.INSTANSEG && !training) {
@@ -464,6 +453,23 @@ final class ModelForm {
 
     String selectedModelName() {
         return modelAlias.get().isBlank() ? modelDisplayName(model.get()) : modelAlias.get();
+    }
+
+    static Label modelDisplay(javafx.beans.value.ObservableValue<String> name,
+                              javafx.beans.value.ObservableValue<String> details) {
+        var display = new Label();
+        display.getStyleClass().add("model-selection");
+        display.setMinWidth(0);
+        display.setMaxWidth(Double.MAX_VALUE);
+        display.setTextOverrun(OverrunStyle.CENTER_ELLIPSIS);
+        display.textProperty().bind(name);
+        var tooltip = new Tooltip();
+        tooltip.setWrapText(true);
+        tooltip.setMaxWidth(620);
+        tooltip.textProperty().bind(details);
+        display.setTooltip(tooltip);
+        display.accessibleTextProperty().bind(details);
+        return display;
     }
 
     static String modelDisplayName(String selection) {

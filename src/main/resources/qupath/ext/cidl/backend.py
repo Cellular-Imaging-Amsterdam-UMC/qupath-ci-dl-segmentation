@@ -339,28 +339,65 @@ def predict_cellsam(config, device):
         save_instances(patch, labels)
 
 
-def prompt_microsam(config, device):
-    import torch
-    from micro_sam.util import get_sam_model
+class MicroSamPredictor:
+    def __init__(self, config, device):
+        from micro_sam.util import get_sam_model
 
-    weights = config["model"] or None
-    if weights and not Path(weights).is_file():
-        raise FileNotFoundError("Choose an accessible µSAM checkpoint file.")
-    print("µSAM · Loading light microscopy checkpoint")
-    predictor = get_sam_model(model_type="vit_b_lm", device=device, checkpoint_path=weights)
-    patch = config["patches"][0]
-    data = load_image(patch, config)
-    low, high = np.percentile(data, (1, 99.8), axis=(0, 1))
-    normalized = np.uint8(255 * np.clip((data - low) / np.maximum(high - low, 1e-12), 0, 1))
-    if data.shape[-1] == 1:
-        normalized = np.repeat(normalized, 3, axis=-1)
-    points = np.array([[item["x"], item["y"]] for item in config["prompts"]], dtype=np.float32)
-    labels = np.array([item["label"] for item in config["prompts"]], dtype=np.int32)
-    print("µSAM · Computing image embedding and prompt mask")
-    with torch.inference_mode():
-        predictor.set_image(normalized)
-        masks, scores, _ = predictor.predict(point_coords=points, point_labels=labels, multimask_output=True)
-    save_instances(patch, masks[int(np.argmax(scores))])
+        weights = config["model"] or None
+        if weights and not Path(weights).is_file():
+            raise FileNotFoundError("Choose an accessible µSAM checkpoint file.")
+        print("µSAM · Loading ViT-B checkpoint", flush=True)
+        self.predictor = get_sam_model(model_type="vit_b_lm", device=device, checkpoint_path=weights)
+        self.embedding_key = None
+
+    def predict(self, config):
+        import torch
+        from scipy.ndimage import label
+
+        patch = config["patches"][0]
+        key = config.get("embedding_key")
+        points = np.array([[item["x"], item["y"]] for item in config["prompts"]], dtype=np.float32)
+        labels = np.array([item["label"] for item in config["prompts"]], dtype=np.int32)
+        with torch.inference_mode():
+            if key is None or self.embedding_key != key:
+                print("µSAM · Computing image embedding", flush=True)
+                data = load_image(patch, config)
+                low, high = np.percentile(data, (1, 99.8), axis=(0, 1))
+                normalized = np.uint8(255 * np.clip((data - low) / np.maximum(high - low, 1e-12), 0, 1))
+                if data.shape[-1] == 1:
+                    normalized = np.repeat(normalized, 3, axis=-1)
+                self.predictor.set_image(normalized)
+                self.embedding_key = key
+            masks, scores, _ = self.predictor.predict(point_coords=points, point_labels=labels, multimask_output=True)
+        foreground = points[labels == 1][0]
+        x, y = map(int, foreground)
+        result = np.zeros(masks.shape[1:], dtype=np.int32)
+        if 0 <= x < result.shape[1] and 0 <= y < result.shape[0]:
+            for index in np.argsort(scores)[::-1]:
+                if masks[index, y, x]:
+                    components, _ = label(masks[index])
+                    result = components == components[y, x]
+                    break
+        save_instances(patch, result)
+
+
+def prompt_microsam(config, device):
+    MicroSamPredictor(config, device).predict(config)
+
+
+def microsam_session():
+    predictor = None
+    for line in sys.stdin:
+        try:
+            config = json.loads(line)
+            if predictor is None:
+                predictor = MicroSamPredictor(config, select_device(config["device"]))
+            predictor.predict(config)
+            result = {"ok": True}
+        except Exception as exc:
+            result = {"error": f"{type(exc).__name__}: {exc}"}
+        print("CI_MICROSAM\t" + json.dumps(result), flush=True)
+
 
 def labeled_crop(image, labels, size, rng):
     h, w = labels.shape
@@ -561,6 +598,9 @@ def train_instanseg(config, device):
 
 
 def main():
+    if sys.argv[1] == "--microsam-session":
+        microsam_session()
+        return
     config = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
     logging.basicConfig(level=logging.INFO, format="%(name)s · %(message)s", stream=sys.stdout)
     device = select_device(config["device"])
