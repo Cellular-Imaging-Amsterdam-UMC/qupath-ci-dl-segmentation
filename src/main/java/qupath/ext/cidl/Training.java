@@ -211,7 +211,7 @@ final class Training {
         return count;
     }
 
-    private static int exportSpots(ROI region, RegionRequest request, PatchIO.Patch patch,
+    static int exportSpots(ROI region, RegionRequest request, PatchIO.Patch patch,
                                    List<ROI> annotations, Path output) throws Exception {
         var points = new java.util.LinkedHashSet<String>();
         double ds = request.getDownsample();

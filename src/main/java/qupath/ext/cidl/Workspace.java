@@ -104,7 +104,14 @@ final class Workspace {
             chooseImages.setOnAction(event -> chooseImages());
             addClasses.setOnAction(event -> addClasses());
             var actions = new HBox(8, chooseImages, addClasses);
-            var instruction = new Label("Classify rectangles as Training or Validation and label the objects inside them.");
+            var instruction = new Label();
+            var selectedTab = tabs.getSelectionModel().selectedItemProperty();
+            instruction.textProperty().bind(javafx.beans.binding.Bindings.createStringBinding(() -> {
+                String regions = "Classify rectangles as Training or Validation. ";
+                return selectedTab.get() != null && selectedTab.get().getUserData() == Engine.SPOTIFLOW
+                        ? regions + "Mark spots with points. Area annotations contribute their centroids."
+                        : regions + "Draw one area annotation per instance.";
+            }, selectedTab));
             instruction.setWrapText(true);
             instruction.getStyleClass().add("note");
             content.getChildren().add(card("Training images", actions, instruction));

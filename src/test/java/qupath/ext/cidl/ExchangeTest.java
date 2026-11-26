@@ -52,6 +52,20 @@ class ExchangeTest {
     }
 
     @Test
+    void exportsExplicitSpotsAndAreaCentroidsTogether() throws Exception {
+        var plane = qupath.lib.regions.ImagePlane.getDefaultPlane();
+        var region = qupath.lib.roi.ROIs.createRectangleROI(20, 40, 80, 80, plane);
+        var area = qupath.lib.roi.ROIs.createPolygonROI(new double[]{24, 36, 24}, new double[]{46, 46, 61}, plane);
+        var points = qupath.lib.roi.ROIs.createPointsROI(new double[]{22, 25, 111}, new double[]{42, 47, 50}, plane);
+        var request = qupath.lib.regions.RegionRequest.createInstance("test", 2, region);
+        var patch = new PatchIO.Patch("image", null, null, 40, 40, 1);
+        var output = work.resolve("points");
+
+        assertEquals(3, Training.exportSpots(region, request, patch, java.util.List.of(points, area), output));
+        assertEquals(java.util.List.of("0.5\t0.5", "3.0\t2.0", "5.0\t3.5"), Files.readAllLines(output));
+    }
+
+    @Test
     void chartKeepsPaddingForNearlyConstantLoss() {
         var warmup = LossChart.range(DoubleStream.of(0.65, 0.66), true);
         var recent = LossChart.range(DoubleStream.of(0.65, 0.66), false);
