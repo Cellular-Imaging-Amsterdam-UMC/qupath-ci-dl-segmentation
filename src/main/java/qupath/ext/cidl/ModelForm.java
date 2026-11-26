@@ -1,5 +1,6 @@
 package qupath.ext.cidl;
 
+import javafx.beans.binding.Bindings;
 import javafx.beans.property.StringProperty;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
@@ -10,6 +11,7 @@ import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextField;
 import javafx.scene.control.TitledPane;
+import javafx.scene.control.Tooltip;
 import javafx.scene.layout.ColumnConstraints;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
@@ -18,6 +20,7 @@ import javafx.scene.layout.VBox;
 import javafx.stage.DirectoryChooser;
 import javafx.stage.FileChooser;
 import javafx.stage.Window;
+import javafx.util.converter.IntegerStringConverter;
 import qupath.lib.gui.prefs.PathPrefs;
 
 import java.nio.file.Files;
@@ -27,6 +30,9 @@ import java.util.List;
 import java.util.Locale;
 
 final class ModelForm {
+    private static final int DEFAULT_RECTANGLE_SIZE = 256;
+    private static final List<Integer> RECTANGLE_SIZES = List.of(128, 256, 512, 1024, 2048);
+
     final Engine engine;
     private final boolean training;
     private final Window window;
@@ -36,6 +42,7 @@ final class ModelForm {
     private final ComboBox<Channels.Choice> primary = new ComboBox<>();
     private final ComboBox<Channels.Choice> secondary = new ComboBox<>();
     private final TextField downsample = new TextField("1");
+    private final ComboBox<Integer> rectangleSize = new ComboBox<>();
     private final TextField diameter = new TextField("0");
     private final TextField threshold = new TextField();
     private final TextField flow = new TextField("0.4");
@@ -68,7 +75,7 @@ final class ModelForm {
             case SPOTIFLOW -> "general or model folder";
             case STARDIST -> "Choose a StarDist .pb or .onnx file";
         });
-        var modelPath = new javafx.scene.control.Tooltip();
+        var modelPath = new Tooltip();
         modelPath.textProperty().bind(model.textProperty());
         model.setTooltip(modelPath);
         expansion.disableProperty().bind(annotations.selectedProperty());
@@ -84,6 +91,24 @@ final class ModelForm {
         batch.setText(engine == Engine.CELLPOSE ? "8" : "4");
         crop.setText(engine == Engine.CELLPOSE ? "224" : "256");
         name.setText(engine.id + "_custom");
+        if (training) {
+            var preference = PathPrefs.createPersistentPreference("ci.dl." + engine.id + ".rectangle.size",
+                    DEFAULT_RECTANGLE_SIZE);
+            rectangleSize.getItems().setAll(RECTANGLE_SIZES);
+            rectangleSize.setValue(RECTANGLE_SIZES.contains(preference.get()) ? preference.get() : DEFAULT_RECTANGLE_SIZE);
+            rectangleSize.valueProperty().addListener((observable, before, after) -> {
+                if (after != null)
+                    preference.set(after);
+            });
+            rectangleSize.setConverter(new IntegerStringConverter() {
+                @Override
+                public String toString(Integer size) {
+                    return size == null ? "" : size + " × " + size;
+                }
+            });
+            rectangleSize.setPrefWidth(126);
+            rectangleSize.setTooltip(new Tooltip("Size of new rectangle annotations in original image pixels."));
+        }
     }
 
     Node content() {
@@ -95,6 +120,15 @@ final class ModelForm {
         if (engine == Engine.CELLPOSE)
             add(input, "Secondary channel", secondary);
         add(input, "Downsample", downsample);
+        if (training) {
+            var modelSize = new Label();
+            modelSize.getStyleClass().add("note");
+            modelSize.textProperty().bind(Bindings.createStringBinding(this::modelRectangleSize,
+                    rectangleSize.valueProperty(), downsample.textProperty()));
+            var sizing = new HBox(8, rectangleSize, modelSize);
+            sizing.setAlignment(Pos.CENTER_LEFT);
+            add(input, "New rectangle size (image pixels)", sizing);
+        }
 
         var parameters = grid();
         if (training) {
@@ -152,6 +186,20 @@ final class ModelForm {
         scroll.setFitToWidth(true);
         scroll.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
         return scroll;
+    }
+
+    int rectangleSide() {
+        return rectangleSize.getValue();
+    }
+
+    private String modelRectangleSize() {
+        try {
+            var resolution = decimal(downsample, "Downsample", 1, 128);
+            var side = Math.round(rectangleSide() / resolution);
+            return "≈ " + side + " × " + side + " model pixels";
+        } catch (IllegalArgumentException e) {
+            return "";
+        }
     }
 
     private HBox pythonPicker() {

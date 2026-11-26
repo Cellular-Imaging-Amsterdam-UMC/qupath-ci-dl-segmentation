@@ -28,6 +28,31 @@
     -fx-padding: 0;
 }
 
+.ci-dl .workspace-scroll > .scroll-bar:vertical {
+    -fx-pref-width: 17px;
+    -fx-background-color: -ci-subtle;
+    -fx-background-insets: 0;
+}
+
+.ci-dl .workspace-scroll > .scroll-bar:vertical > .track {
+    -fx-background-color: -ci-subtle;
+}
+
+.ci-dl .workspace-scroll > .scroll-bar:vertical > .thumb {
+    -fx-background-color: ladder(-fx-background, #82969b 49%, #687d83 51%);
+    -fx-background-insets: 1 2;
+    -fx-background-radius: 6px;
+}
+
+.ci-dl .workspace-scroll > .scroll-bar:vertical > .thumb:hover {
+    -fx-background-color: ladder(-fx-background, #a6b8bb 49%, #485e64 51%);
+}
+
+.ci-dl .workspace-scroll > .scroll-bar:vertical > .increment-button > .increment-arrow,
+.ci-dl .workspace-scroll > .scroll-bar:vertical > .decrement-button > .decrement-arrow {
+    -fx-background-color: -fx-text-base-color;
+}
+
 .ci-dl .workspace-body {
     -fx-padding: 8 10 9 10;
 }

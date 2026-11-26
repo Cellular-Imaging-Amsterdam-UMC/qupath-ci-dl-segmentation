@@ -3,7 +3,9 @@ package qupath.ext.cidl;
 import qupath.lib.images.ImageData;
 import qupath.lib.objects.PathObject;
 import qupath.lib.projects.ProjectImageEntry;
+import qupath.lib.regions.ImagePlane;
 import qupath.lib.regions.RegionRequest;
+import qupath.lib.roi.ROIs;
 import qupath.lib.roi.RectangleROI;
 import qupath.lib.roi.interfaces.ROI;
 
@@ -14,6 +16,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 
@@ -33,6 +36,53 @@ final class Training {
         return objects.stream().filter(PathObject::hasROI)
                 .map(object -> new Mark(object.getPathClass() == null ? "" : object.getPathClass().toString(),
                         object.getROI())).toList();
+    }
+
+    static ROI placeRectangle(int width, int height, double centerX, double centerY, int side,
+                              ImagePlane plane, List<Mark> marks) {
+        int maxX = width - side;
+        int maxY = height - side;
+        if (maxX < 0 || maxY < 0)
+            throw new IllegalArgumentException("The image is smaller than the selected rectangle. Choose a smaller size.");
+
+        int preferredX = Math.clamp(Math.round(centerX - side / 2.0), 0, maxX);
+        int preferredY = Math.clamp(Math.round(centerY - side / 2.0), 0, maxY);
+        var preferred = ROIs.createRectangleROI(preferredX, preferredY, side, side, plane);
+        var occupied = marks.stream().filter(Mark::isRegion).map(Mark::roi)
+                .filter(roi -> roi.isArea() && !roi.isEmpty() && samePlane(roi, preferred)).toList();
+        if (occupied.stream().noneMatch(roi -> overlaps(preferred, roi)))
+            return preferred;
+
+        // A free rectangle can be slid toward the preferred position until it reaches a region or image edge.
+        var xs = new LinkedHashSet<>(List.of(preferredX, 0, maxX));
+        var ys = new LinkedHashSet<>(List.of(preferredY, 0, maxY));
+        for (var roi : occupied) {
+            xs.add(Math.clamp((long) Math.floor(roi.getBoundsX() - side), 0, maxX));
+            xs.add(Math.clamp((long) Math.ceil(roi.getBoundsX() + roi.getBoundsWidth()), 0, maxX));
+            ys.add(Math.clamp((long) Math.floor(roi.getBoundsY() - side), 0, maxY));
+            ys.add(Math.clamp((long) Math.ceil(roi.getBoundsY() + roi.getBoundsHeight()), 0, maxY));
+        }
+        ROI nearest = null;
+        double bestDistance = Double.POSITIVE_INFINITY;
+        for (int x : xs) {
+            double dx = (double) x - preferredX;
+            if (dx * dx >= bestDistance)
+                continue;
+            for (int y : ys) {
+                double dy = (double) y - preferredY;
+                double distance = dx * dx + dy * dy;
+                if (distance >= bestDistance)
+                    continue;
+                var candidate = ROIs.createRectangleROI(x, y, side, side, plane);
+                if (occupied.stream().noneMatch(roi -> overlaps(candidate, roi))) {
+                    bestDistance = distance;
+                    nearest = candidate;
+                }
+            }
+        }
+        if (nearest == null)
+            throw new IllegalArgumentException("There is no room for this rectangle on this plane. Choose a smaller size.");
+        return nearest;
     }
 
     static void run(Job job, List<Source> sources, Settings s) throws Exception {

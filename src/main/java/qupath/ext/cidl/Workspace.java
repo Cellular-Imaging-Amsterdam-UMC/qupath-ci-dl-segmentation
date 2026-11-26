@@ -2,6 +2,7 @@ package qupath.ext.cidl;
 
 import javafx.application.Platform;
 import javafx.beans.property.StringProperty;
+import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.Scene;
@@ -16,18 +17,24 @@ import javafx.scene.control.ToggleButton;
 import javafx.scene.control.Tooltip;
 import javafx.scene.shape.Polyline;
 import javafx.scene.layout.BorderPane;
+import javafx.scene.layout.FlowPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
 import javafx.stage.WindowEvent;
+import org.controlsfx.glyphfont.FontAwesome;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.gui.dialogs.ProjectDialogs;
+import qupath.lib.gui.tools.IconFactory;
 import qupath.lib.images.ImageData;
 import qupath.lib.images.servers.ServerTools;
+import qupath.lib.objects.PathObject;
+import qupath.lib.objects.PathObjects;
 import qupath.lib.objects.classes.PathClass;
 import qupath.lib.projects.ProjectImageEntry;
+import qupath.lib.roi.RectangleROI;
 
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
@@ -52,6 +59,9 @@ final class Workspace {
     private final Label context = new Label();
     private final Button chooseImages = new Button("Choose images…");
     private final Button addClasses = new Button("Add region classes");
+    private final Button addTraining = new Button("Add Training Rectangle");
+    private final Button addValidation = new Button("Add Validation Rectangle");
+    private final Button toggleRectangleLocks = new Button();
     private final Button run;
     private final Button cancel = new Button("Stop");
     private final LossChart loss;
@@ -61,6 +71,7 @@ final class Workspace {
     private Job active;
     private double expandedHeight;
     private boolean expandedMaximized;
+    private double compactChrome;
 
     Workspace(QuPathGUI qupath, boolean training, Map<Engine, StringProperty> pythonPaths) {
         this.qupath = qupath;
@@ -100,21 +111,34 @@ final class Workspace {
         VBox.setVgrow(tabs, Priority.ALWAYS);
 
         var content = new VBox(8);
+        var top = new VBox(header);
+        var expandedDetails = new ArrayList<Node>();
         if (training) {
             chooseImages.setOnAction(event -> chooseImages());
             addClasses.setOnAction(event -> addClasses());
-            var actions = new HBox(8, chooseImages, addClasses);
+            addTraining.setOnAction(event -> addRectangle("Training"));
+            addValidation.setOnAction(event -> addRectangle("Validation"));
+            toggleRectangleLocks.setId("toggle-rectangle-locks");
+            toggleRectangleLocks.setGraphic(IconFactory.createNode(FontAwesome.Glyph.LOCK, 13));
+            toggleRectangleLocks.setAccessibleText("Toggle Training and Validation rectangle locks");
+            toggleRectangleLocks.setTooltip(new Tooltip("Lock all Training and Validation rectangles in this image. "
+                    + "If they are all locked, unlock them."));
+            toggleRectangleLocks.setOnAction(event -> toggleRectangleLocks());
+            var actions = new FlowPane(8, 6, chooseImages, addClasses, addTraining, addValidation, toggleRectangleLocks);
             var instruction = new Label();
             var selectedTab = tabs.getSelectionModel().selectedItemProperty();
             instruction.textProperty().bind(javafx.beans.binding.Bindings.createStringBinding(() -> {
-                String regions = "Classify rectangles as Training or Validation. ";
+                String regions = "Lock rectangles before labeling. ";
                 return selectedTab.get() != null && selectedTab.get().getUserData() == Engine.SPOTIFLOW
                         ? regions + "Mark spots with points. Area annotations contribute their centroids."
                         : regions + "Draw one area annotation per instance.";
             }, selectedTab));
             instruction.setWrapText(true);
             instruction.getStyleClass().add("note");
-            content.getChildren().add(card("Training images", actions, instruction));
+            var toolbar = card("Training images", actions, instruction);
+            VBox.setMargin(toolbar, new Insets(8, 10, 0, 10));
+            top.getChildren().add(toolbar);
+            expandedDetails.addAll(List.of(toolbar.getChildren().getFirst(), instruction));
         }
         content.getChildren().add(tabs);
         log.setEditable(false);
@@ -146,10 +170,10 @@ final class Workspace {
         HBox.setHgrow(status, Priority.ALWAYS);
         footer.setAlignment(Pos.CENTER_LEFT);
         footer.getStyleClass().add("workspace-footer");
-        var root = new BorderPane(content, header, null, footer, null);
+        var root = new BorderPane(content, top, null, footer, null);
         root.getStyleClass().add("ci-dl");
         if (training)
-            addCollapseButton(header, root, content, footer);
+            addCollapseButton(header, root, content, footer, expandedDetails);
         var scene = new Scene(root, 675, training ? 900 : 775);
         scene.getStylesheets().add(Workspace.class.getResource("workspace.css").toExternalForm());
         stage.setScene(scene);
@@ -170,7 +194,8 @@ final class Workspace {
         stage.toFront();
     }
 
-    private void addCollapseButton(HBox header, BorderPane root, VBox content, HBox footer) {
+    private void addCollapseButton(HBox header, BorderPane root, VBox content, HBox footer,
+                                   List<Node> expandedDetails) {
         var toggle = new ToggleButton();
         toggle.setId("training-layout-toggle");
         toggle.setMinWidth(34);
@@ -189,10 +214,14 @@ final class Workspace {
             toggle.setAccessibleText(tooltip.getText());
             glyph.setRotate(collapsed ? 180 : 0);
             context.setWrapText(!collapsed);
+            for (var detail : expandedDetails) {
+                detail.setVisible(!collapsed);
+                detail.setManaged(!collapsed);
+            }
             if (collapsed) {
                 expandedHeight = stage.getHeight();
                 expandedMaximized = stage.isMaximized();
-                var chrome = Math.max(0, stage.getHeight() - stage.getScene().getHeight());
+                compactChrome = Math.max(0, stage.getHeight() - stage.getScene().getHeight());
                 if (expandedMaximized) {
                     var x = stage.getX();
                     var y = stage.getY();
@@ -204,12 +233,7 @@ final class Workspace {
                 }
                 root.setCenter(null);
                 root.applyCss();
-                root.layout();
-                var width = stage.getScene().getWidth();
-                var height = Math.ceil(chrome + header.prefHeight(width) + footer.prefHeight(width) + 1);
-                stage.setMinHeight(height);
-                stage.setMaxHeight(height);
-                stage.setHeight(height);
+                sizeCompactWindow(root, footer);
             } else {
                 stage.setMaxHeight(Double.MAX_VALUE);
                 stage.setMinHeight(TRAINING_MIN_HEIGHT);
@@ -219,6 +243,22 @@ final class Workspace {
                     stage.setMaximized(true);
             }
         });
+        root.widthProperty().addListener((observable, before, after) -> {
+            if (toggle.isSelected())
+                Platform.runLater(() -> {
+                    if (toggle.isSelected())
+                        sizeCompactWindow(root, footer);
+                });
+        });
+    }
+
+    private void sizeCompactWindow(BorderPane root, HBox footer) {
+        var width = stage.getScene().getWidth();
+        var height = Math.ceil(compactChrome + root.getTop().prefHeight(width) + footer.prefHeight(width) + 1);
+        stage.setMaxHeight(Double.MAX_VALUE);
+        stage.setMinHeight(height);
+        stage.setMaxHeight(height);
+        stage.setHeight(height);
     }
 
     static VBox card(String title, Node... nodes) {
@@ -237,6 +277,9 @@ final class Workspace {
             var project = qupath.getProject();
             chooseImages.setDisable(active != null || project == null);
             addClasses.setDisable(active != null || project == null);
+            addTraining.setDisable(active != null || data == null);
+            addValidation.setDisable(active != null || data == null);
+            toggleRectangleLocks.setDisable(active != null || data == null);
             if (project == null) {
                 context.setText("Open a QuPath project to select training images.");
             } else {
@@ -286,16 +329,73 @@ final class Workspace {
     }
 
     private void addClasses() {
+        registerClasses(List.of(PathClass.fromString("Training"), PathClass.fromString("Validation")));
+        status.setText("Training and Validation classes are available.");
+    }
+
+    private void registerClasses(List<PathClass> additions) {
         var classes = qupath.getAvailablePathClasses();
-        for (var name : List.of("Training", "Validation")) {
-            var pathClass = PathClass.fromString(name);
+        for (var pathClass : additions) {
             if (!classes.contains(pathClass))
                 classes.add(pathClass);
         }
         var project = qupath.getProject();
         if (project != null)
             project.setPathClasses(classes);
-        status.setText("Training and Validation classes are available.");
+    }
+
+    private void addRectangle(String classification) {
+        var viewer = qupath.getViewer();
+        var data = qupath.getImageData();
+        if (active != null || viewer == null || data == null)
+            return;
+        int side = activeForm().rectangleSide();
+        var server = data.getServer();
+        var hierarchy = data.getHierarchy();
+        try {
+            var roi = Training.placeRectangle(server.getWidth(), server.getHeight(), viewer.getCenterPixelX(),
+                    viewer.getCenterPixelY(), side, viewer.getImagePlane(),
+                    Training.snapshot(hierarchy.getAnnotationObjects()));
+            var pathClass = PathClass.fromString(classification);
+            var annotation = PathObjects.createAnnotationObject(roi, pathClass);
+            if (hierarchy.insertPathObject(annotation, true)) {
+                registerClasses(List.of(pathClass));
+                viewer.setSelectedObject(annotation);
+                viewer.setCenterPixelLocation(roi.getCentroidX(), roi.getCentroidY());
+                status.setText("Added a " + classification + " rectangle (" + side + " × " + side + " px).");
+            }
+        } catch (IllegalArgumentException e) {
+            status.setText(e.getMessage());
+            enqueue("Error · " + e.getMessage());
+        }
+    }
+
+    private void toggleRectangleLocks() {
+        var data = qupath.getImageData();
+        if (active != null || data == null)
+            return;
+        var hierarchy = data.getHierarchy();
+        var trainingClass = PathClass.fromString("Training");
+        var validationClass = PathClass.fromString("Validation");
+        var rectangles = hierarchy.getAnnotationObjects().stream()
+                .filter(object -> object.getROI() instanceof RectangleROI)
+                .filter(object -> trainingClass.equals(object.getPathClass()) || validationClass.equals(object.getPathClass()))
+                .toList();
+        if (rectangles.isEmpty()) {
+            status.setText("This image has no Training or Validation rectangles.");
+            return;
+        }
+        boolean lock = !rectangles.stream().allMatch(PathObject::isLocked);
+        rectangles.forEach(object -> object.setLocked(lock));
+        hierarchy.fireObjectsChangedEvent(this, rectangles);
+        var count = rectangles.size();
+        status.setText((lock ? "Locked " : "Unlocked ") + count
+                + (count == 1 ? " rectangle in this image." : " rectangles in this image."));
+    }
+
+    private ModelForm activeForm() {
+        var engine = (Engine) tabs.getSelectionModel().getSelectedItem().getUserData();
+        return forms.get(engine);
     }
 
     private Map<ProjectImageEntry<BufferedImage>, ImageData<BufferedImage>> openImages() {
@@ -315,8 +415,8 @@ final class Workspace {
     private void start() {
         if (active != null)
             return;
-        var engine = (Engine) tabs.getSelectionModel().getSelectedItem().getUserData();
-        var form = forms.get(engine);
+        var form = activeForm();
+        var engine = form.engine;
         try {
             if (training) {
                 var project = qupath.getProject();
@@ -366,6 +466,9 @@ final class Workspace {
         tabs.setDisable(true);
         chooseImages.setDisable(true);
         addClasses.setDisable(true);
+        addTraining.setDisable(true);
+        addValidation.setDisable(true);
+        toggleRectangleLocks.setDisable(true);
         cancel.setDisable(false);
         status.setText(training ? "Training…" : "Predicting…");
         enqueue(engine.title + (training ? " training started." : " prediction started."));

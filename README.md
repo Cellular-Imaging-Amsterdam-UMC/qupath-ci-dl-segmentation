@@ -39,16 +39,17 @@ Downsample applies to the XY resolution in the selected plane. A downsample of 2
 
 ## Training
 
-1. In a QuPath project, draw rectangle annotations and assign the classes **Training** and **Validation**. Use **Add region classes** in the training window if needed.
-2. Label the objects in those rectangles. For Cellpose, draw one area annotation per instance. For Spotiflow, use point annotations (each point is a spot) or use area annotations (each centroid is a spot). Keep training and validation rectangles separate on the same image plane.
-3. Use **Choose images** to select the exact project images to include. Open images contribute their current annotations. Closed images contribute their saved annotations. Channel names are matched across selected images. Both splits are required.
-4. Open the Cellpose or Spotiflow tab. Enter a new model name and choose a base model to fine-tune, or leave it empty to train from scratch. Set the channel and training parameters, then click **Start training**.
+1. Open a project image and use **Add Training Rectangle** or **Add Validation Rectangle**. The extension places an unlocked rectangle near the current view on the active plane and avoids overlapping existing Training or Validation regions. Drag the rectangle into position with the QuPath Move tool. The default is 256 × 256 image pixels. Change **New rectangle size** on the active model tab to use a different preset and check its dimensions at the current downsample.
+2. Use the padlock button to lock all Training and Validation rectangles in the active image before labeling. Click it again when all rectangles are locked to unlock them together. For one rectangle, select it and use **Objects → Lock… → Toggle selected objects lock**. You can also draw and classify rectangles manually.
+3. Label the objects in those rectangles. For Cellpose, draw one area annotation per instance. For Spotiflow, use point annotations (each point is a spot) or use area annotations (each centroid is a spot). Keep training and validation rectangles separate on the same image plane.
+4. Use **Choose images** to select the exact project images to include. Open images contribute their current annotations. Closed images contribute their saved annotations. Channel names are matched across selected images. Both splits are required.
+5. Open the Cellpose or Spotiflow tab. Enter a new model name and choose a base model to fine-tune, or leave it empty to train from scratch. Set the channel and training parameters, then click **Start training**.
 
 The extension saves successful models under `models/` in the project folder. Cellpose produces a weights file. Spotiflow produces a folder containing the model configuration, weights, and thresholds. Pick this file or folder from the corresponding Prediction tab.
 
 The log streams Python output. Spotiflow reports training and validation loss each epoch. Cellpose reports both on its native validation schedule during training and fills in per-epoch training loss at completion when the installed Cellpose version returns it. The chart starts with a zero baseline, then gradually fits the recent range with padding. Enable **Fit all epochs** to bring earlier values back into view.
 
-Use the chevron in the Training header to collapse or expand the workspace. Training continues in the compact view, with the run status and Stop button visible.
+Use the chevron in the Training header to collapse or expand the workspace. The training toolbar, run status, and Stop button stay visible in the compact view.
 
 ## Build
 
