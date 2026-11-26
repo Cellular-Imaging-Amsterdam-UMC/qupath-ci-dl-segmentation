@@ -33,6 +33,8 @@ import qupath.lib.images.servers.ServerTools;
 import qupath.lib.objects.PathObject;
 import qupath.lib.objects.PathObjects;
 import qupath.lib.objects.classes.PathClass;
+import qupath.lib.objects.hierarchy.PathObjectHierarchy;
+import qupath.lib.objects.hierarchy.events.PathObjectHierarchyListener;
 import qupath.lib.projects.ProjectImageEntry;
 import qupath.lib.roi.RectangleROI;
 
@@ -68,6 +70,21 @@ final class Workspace {
     private final List<ProjectImageEntry<BufferedImage>> selected = new ArrayList<>();
     private final ConcurrentLinkedQueue<String> pending = new ConcurrentLinkedQueue<>();
     private final AtomicBoolean logScheduled = new AtomicBoolean();
+    private final AtomicBoolean rectangleRefreshScheduled = new AtomicBoolean();
+    private final PathObjectHierarchyListener rectangleListener = event -> {
+        if (event.isChanging() || event.isObjectMeasurementEvent())
+            return;
+        if (Platform.isFxApplicationThread()) {
+            refreshRectangleLockIndicator();
+        } else if (rectangleRefreshScheduled.compareAndSet(false, true)) {
+            Platform.runLater(() -> {
+                rectangleRefreshScheduled.set(false);
+                refreshRectangleLockIndicator();
+            });
+        }
+    };
+    private PathObjectHierarchy rectangleHierarchy;
+    private FontAwesome.Glyph rectangleLockGlyph;
     private Job active;
     private double expandedHeight;
     private boolean expandedMaximized;
@@ -119,10 +136,10 @@ final class Workspace {
             addTraining.setOnAction(event -> addRectangle("Training"));
             addValidation.setOnAction(event -> addRectangle("Validation"));
             toggleRectangleLocks.setId("toggle-rectangle-locks");
-            toggleRectangleLocks.setGraphic(IconFactory.createNode(FontAwesome.Glyph.LOCK, 13));
-            toggleRectangleLocks.setAccessibleText("Toggle Training and Validation rectangle locks");
-            toggleRectangleLocks.setTooltip(new Tooltip("Lock all Training and Validation rectangles in this image. "
-                    + "If they are all locked, unlock them."));
+            toggleRectangleLocks.setMinWidth(30);
+            toggleRectangleLocks.setPrefWidth(30);
+            toggleRectangleLocks.setMaxWidth(30);
+            toggleRectangleLocks.setTooltip(new Tooltip());
             toggleRectangleLocks.setOnAction(event -> toggleRectangleLocks());
             var actions = new FlowPane(8, 6, chooseImages, addClasses, addTraining, addValidation, toggleRectangleLocks);
             var instruction = new Label();
@@ -180,6 +197,7 @@ final class Workspace {
 
         qupath.imageDataProperty().addListener((value, before, after) -> updateContext());
         if (training) {
+            stage.showingProperty().addListener((value, before, after) -> observeRectangleHierarchy());
             qupath.projectProperty().addListener((value, before, after) -> {
                 selected.clear();
                 updateContext();
@@ -279,7 +297,7 @@ final class Workspace {
             addClasses.setDisable(active != null || project == null);
             addTraining.setDisable(active != null || data == null);
             addValidation.setDisable(active != null || data == null);
-            toggleRectangleLocks.setDisable(active != null || data == null);
+            observeRectangleHierarchy();
             if (project == null) {
                 context.setText("Open a QuPath project to select training images.");
             } else {
@@ -370,21 +388,59 @@ final class Workspace {
         }
     }
 
-    private void toggleRectangleLocks() {
+    private void observeRectangleHierarchy() {
         var data = qupath.getImageData();
-        if (active != null || data == null)
-            return;
-        var hierarchy = data.getHierarchy();
+        var next = stage.isShowing() && data != null ? data.getHierarchy() : null;
+        if (rectangleHierarchy != next) {
+            if (rectangleHierarchy != null)
+                rectangleHierarchy.removeListener(rectangleListener);
+            rectangleHierarchy = next;
+            if (rectangleHierarchy != null)
+                rectangleHierarchy.addListener(rectangleListener);
+        }
+        refreshRectangleLockIndicator();
+    }
+
+    private void refreshRectangleLockIndicator() {
+        var rectangles = rectangleHierarchy == null ? List.<PathObject>of() : regionRectangles(rectangleHierarchy);
+        boolean hasRectangles = !rectangles.isEmpty();
+        boolean allLocked = hasRectangles && rectangles.stream().allMatch(PathObject::isLocked);
+        var glyph = allLocked ? FontAwesome.Glyph.LOCK : FontAwesome.Glyph.UNLOCK;
+        if (rectangleLockGlyph != glyph) {
+            rectangleLockGlyph = glyph;
+            var icon = IconFactory.createNode(glyph, 16);
+            if (allLocked)
+                icon.getStyleClass().add("rectangle-lock-active");
+            toggleRectangleLocks.setGraphic(icon);
+        }
+        String message;
+        if (!hasRectangles)
+            message = "This image has no Training or Validation rectangles.";
+        else if (allLocked)
+            message = "All Training and Validation rectangles are locked. Click to unlock them.";
+        else
+            message = "At least one Training or Validation rectangle is unlocked. Click to lock them all.";
+        toggleRectangleLocks.setAccessibleText(message);
+        toggleRectangleLocks.getTooltip().setText(message);
+        toggleRectangleLocks.setDisable(active != null || !hasRectangles);
+    }
+
+    private static List<PathObject> regionRectangles(PathObjectHierarchy hierarchy) {
         var trainingClass = PathClass.fromString("Training");
         var validationClass = PathClass.fromString("Validation");
-        var rectangles = hierarchy.getAnnotationObjects().stream()
+        return hierarchy.getAnnotationObjects().stream()
                 .filter(object -> object.getROI() instanceof RectangleROI)
                 .filter(object -> trainingClass.equals(object.getPathClass()) || validationClass.equals(object.getPathClass()))
                 .toList();
-        if (rectangles.isEmpty()) {
-            status.setText("This image has no Training or Validation rectangles.");
+    }
+
+    private void toggleRectangleLocks() {
+        var hierarchy = rectangleHierarchy;
+        if (active != null || hierarchy == null)
             return;
-        }
+        var rectangles = regionRectangles(hierarchy);
+        if (rectangles.isEmpty())
+            return;
         boolean lock = !rectangles.stream().allMatch(PathObject::isLocked);
         rectangles.forEach(object -> object.setLocked(lock));
         hierarchy.fireObjectsChangedEvent(this, rectangles);

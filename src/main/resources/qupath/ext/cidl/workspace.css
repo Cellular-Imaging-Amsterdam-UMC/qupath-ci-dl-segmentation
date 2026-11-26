@@ -133,3 +133,7 @@
 }
 .ci-dl .training-key { -fx-background-color: #269486; }
 .ci-dl .validation-key { -fx-background-color: #c97b28; }
+
+.ci-dl .rectangle-lock-active {
+    -fx-text-fill: ladder(-fx-background, #9bddca 49%, #176d64 51%);
+}
